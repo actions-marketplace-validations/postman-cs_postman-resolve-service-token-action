@@ -101,9 +101,13 @@ runs:
           echo "skipped=false" >> "$GITHUB_OUTPUT"
           MINT_URL="$API_HOST/service-account-tokens"
           MINT_BODY="$(jq -nc --arg k "$POSTMAN_API_KEY" '{apiKey:$k}')"
+          # x-api-key header is required on prod (api.getpostman.com); beta accepts
+          # either header or body-only auth. Sending both keeps the call working on
+          # either stack.
           HTTP_CODE="$(
             curl -sS -o mint_response.json -w "%{http_code}" -X POST "$MINT_URL" \
               -H "Content-Type: application/json" \
+              -H "x-api-key: $POSTMAN_API_KEY" \
               --data "$MINT_BODY"
           )"
           RESPONSE="$(cat mint_response.json)"
