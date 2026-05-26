@@ -63,7 +63,7 @@ jobs:
 
 | Input | Default | Notes |
 | --- | --- | --- |
-| `postman-api-key` | | Postman API key (PMAK) used to mint the access token. Required when `postman-access-token` is not provided. |
+| `postman-api-key` | | Postman service-account API key (PMAK) used to mint the access token. Must be a **service-account** key, not a personal user key - the underlying `/service-account-tokens` endpoint requires service-account auth. Required when `postman-access-token` is not provided. |
 | `postman-access-token` | | Optional pre-existing access token. When set, the mint step is skipped and the value is returned verbatim. Use this to preserve existing workflows that manage the token externally. |
 | `postman-team-id` | | Optional pre-known team ID. When set, the `/me` lookup is skipped and the value is returned verbatim. |
 | `postman-stack` | `prod` | One of `prod` (`api.getpostman.com`) or `beta` (`api.getpostman-beta.com`). |
@@ -84,13 +84,13 @@ jobs:
 
 ### Minting only (default)
 
-The default mode requires only `postman-api-key`. No GitHub permissions beyond what your job already has.
+The default mode requires only `postman-api-key` (a service-account PMAK). No GitHub permissions beyond what your job already has.
 
 ### Writing repo secrets
 
 `write-github-secret: 'true'` requires `github-token` to be a PAT or GitHub App installation token with **secrets write** permission on the target repo. The workflow `GITHUB_TOKEN` cannot write repo secrets and will fail.
 
-**Recommended:** create a fine-grained PAT scoped to the target repo with the **Secrets: Read and write** permission, store it as a separate secret (for example `SECRETS_WRITE_PAT`), and pass it via `github-token`.
+**Recommended:** create a fine-grained PAT scoped to the target repo with the **Secrets: Read and write** and **Metadata: Read** permissions, store it as a separate secret (for example `SECRETS_WRITE_PAT`), and pass it via `github-token`. If your org does not allow fine-grained PATs against its repos without prior approval, a classic PAT with the `repo` scope works as a fallback - keep its expiry short.
 
 ## Backward compatibility
 
