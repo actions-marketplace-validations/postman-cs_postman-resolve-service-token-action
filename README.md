@@ -1,6 +1,6 @@
 # postman-resolve-service-token-action
 
-Public open-alpha GitHub Action and npm CLI that mints a Postman service-account access token, resolves the team ID, and optionally writes both back to repo secrets.
+Public customer preview GitHub Action and npm CLI that mints a Postman service-account access token, resolves the team ID, and optionally writes both back to repo secrets.
 
 This action is the producer side of the new programmatic token flow that replaces the manual session-token extraction step described in [`postman-cs/postman-api-onboarding-action`](https://github.com/postman-cs/postman-api-onboarding-action). Mint a fresh access token in CI, hand it to the onboarding action by output, or persist it as a repo secret for other workflows to consume.
 
@@ -147,11 +147,11 @@ When both inputs are provided, the action is effectively a passthrough with `out
 
 `api.getpostman-beta.com` sits behind Postman Access. GitHub-hosted runners cannot reach it; use a self-hosted runner inside the Access perimeter for the `beta` stack. See [`postman-service-account-onboarding-sample`](https://github.com/postman-cs/postman-service-account-onboarding-sample) for the full beta runner setup.
 
-## Open-alpha release strategy
+## Customer Preview Release Strategy
 
-- Open-alpha channel tags use `v0.x.y`.
+- Customer Preview channel tags use `v0.x.y`.
 - Pin immutable tags such as `v0.1.0` for reproducibility.
-- Moving tag `v0` is the rolling open-alpha channel.
+- Moving tag `v0` is the rolling customer preview channel.
 - npm publishes use the matching package version and provenance.
 
 ## License

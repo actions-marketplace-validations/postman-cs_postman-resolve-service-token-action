@@ -1,5 +1,5 @@
 name: postman-resolve-service-token-action
-description: Public open-alpha action that mints a Postman service-account access token, resolves the team ID, and optionally writes both back to repo secrets.
+description: Public customer preview action that mints a Postman service-account access token, resolves the team ID, and optionally writes both back to repo secrets.
 inputs:
   postman-api-key:
     description: Postman API key (PMAK) used to mint the service-account access token. Required when postman-access-token is not provided.

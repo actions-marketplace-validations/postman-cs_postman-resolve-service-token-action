@@ -1,7 +1,7 @@
 {
   "name": "@postman-cse/onboarding-resolve-service-token",
   "version": "0.1.0",
-  "description": "Public open-alpha Postman service token resolver GitHub Action and CLI.",
+  "description": "Public customer preview Postman service token resolver GitHub Action and CLI.",
   "type": "module",
   "main": "dist/index.cjs",
   "bin": {
