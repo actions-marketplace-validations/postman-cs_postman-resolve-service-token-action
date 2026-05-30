@@ -1,6 +1,6 @@
 # postman-resolve-service-token-action
 
-Public open-alpha composite GitHub Action that mints a Postman service-account access token, resolves the team ID, and optionally writes both back to repo secrets.
+Public open-alpha GitHub Action and npm CLI that mints a Postman service-account access token, resolves the team ID, and optionally writes both back to repo secrets.
 
 This action is the producer side of the new programmatic token flow that replaces the manual session-token extraction step described in [`postman-cs/postman-api-onboarding-action`](https://github.com/postman-cs/postman-api-onboarding-action). Mint a fresh access token in CI, hand it to the onboarding action by output, or persist it as a repo secret for other workflows to consume.
 
@@ -32,6 +32,7 @@ jobs:
       - uses: postman-cs/postman-api-onboarding-action@v0
         with:
           project-name: my-service
+          spec-url: https://raw.githubusercontent.com/my-org/my-service/main/openapi.yaml
           spec-path: openapi.yaml
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-access-token: ${{ steps.postman_token.outputs.token }}
@@ -80,6 +81,36 @@ jobs:
 | `team-id` | Resolved Postman team ID. Either looked up via `/me` or the passed-through value of `postman-team-id`. |
 | `skipped` | `'true'` when the mint step was skipped because `postman-access-token` was provided. |
 
+## npm CLI
+
+Install or run the CLI when you need the same token resolution outside GitHub Actions:
+
+```bash
+npx @postman-cse/onboarding-resolve-service-token \
+  --postman-api-key "$POSTMAN_API_KEY"
+```
+
+The CLI prints the action outputs as JSON:
+
+```json
+{
+  "token": "pma_at_...",
+  "team-id": "123456",
+  "skipped": "false"
+}
+```
+
+Flags match the action inputs:
+
+```bash
+postman-resolve-service-token \
+  --postman-access-token "$POSTMAN_ACCESS_TOKEN" \
+  --postman-team-id "$POSTMAN_TEAM_ID" \
+  --write-github-secret false
+```
+
+Secret persistence via `--write-github-secret true` is GitHub-repo specific and requires `gh`, `GITHUB_REPOSITORY`, and `--github-token`.
+
 ## Permissions and secrets
 
 ### Minting only (default)
@@ -121,6 +152,7 @@ When both inputs are provided, the action is effectively a passthrough with `out
 - Open-alpha channel tags use `v0.x.y`.
 - Pin immutable tags such as `v0.1.0` for reproducibility.
 - Moving tag `v0` is the rolling open-alpha channel.
+- npm publishes use the matching package version and provenance.
 
 ## License
 

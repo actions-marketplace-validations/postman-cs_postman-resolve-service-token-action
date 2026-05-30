@@ -7,11 +7,21 @@ Thank you for your interest in contributing. This guide covers the workflow and 
 1. Fork and clone the repository.
 2. Create a feature branch: `git checkout -b my-change`.
 
-This repository is a pure composite GitHub Action - no Node.js, TypeScript, or build step. Edits live in `action.yml` and the documentation files.
+This repository is a Node.js GitHub Action and npm CLI. Runtime code lives in `src/`, tests live in `tests/`, and bundled artifacts live in `dist/`.
 
 ## Local Validation
 
-Before opening a PR, lint the action with [`actionlint`](https://github.com/rhysd/actionlint):
+Before opening a PR, run the package validators:
+
+```bash
+npm ci
+npm run lint
+npm test
+npm run typecheck
+npm run check:dist
+```
+
+Then lint workflows with [`actionlint`](https://github.com/rhysd/actionlint):
 
 ```bash
 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
@@ -23,6 +33,7 @@ $(go env GOPATH)/bin/actionlint
 ## Before Submitting a PR
 
 - [ ] `actionlint` passes locally.
+- [ ] `npm run lint`, `npm test`, `npm run typecheck`, and `npm run check:dist` pass locally.
 - [ ] Changes are focused and address a single concern.
 - [ ] README inputs/outputs tables match `action.yml`.
 - [ ] Behavior changes are reflected in `README.md`.
