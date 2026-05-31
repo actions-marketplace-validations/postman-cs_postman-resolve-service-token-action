@@ -38,6 +38,21 @@ $(go env GOPATH)/bin/actionlint
 - [ ] README inputs/outputs tables match `action.yml`.
 - [ ] Behavior changes are reflected in `README.md`.
 
+## Release Gate
+
+Immutable release tags for this repo are blocked by the central live e2e suite in
+`postman-cs/postman-actions-e2e` before any GitHub release, npm package, or
+release tarball is published. The release workflow validates locally, dispatches
+the e2e workflow with this exact tag pinned for
+`postman-resolve-service-token-action`, waits for the correlated run to succeed,
+and only then publishes.
+
+The rolling `v0` customer-preview alias validates locally but skips npm publish
+and the live e2e gate. `E2E_DISPATCH_TOKEN` is release-critical for immutable
+publishing tags; if it is missing, invalid, or the e2e fails/times out, the
+release must stop before public artifacts are created. Record the e2e run URL
+and conclusion from the release logs as release evidence.
+
 ## Commit Messages
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). All commits must follow this format:
