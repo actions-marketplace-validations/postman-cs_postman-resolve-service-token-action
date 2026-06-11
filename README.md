@@ -30,11 +30,11 @@ jobs:
       - uses: actions/checkout@v5
 
       - id: postman_token
-        uses: postman-cs/postman-resolve-service-token-action@v0
+        uses: postman-cs/postman-resolve-service-token-action@v1
         with:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
 
-      - uses: postman-cs/postman-api-onboarding-action@v0
+      - uses: postman-cs/postman-api-onboarding-action@v1
         with:
           project-name: my-service
           spec-url: https://raw.githubusercontent.com/my-org/my-service/main/openapi.yaml
@@ -58,7 +58,7 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
-      - uses: postman-cs/postman-resolve-service-token-action@v0
+      - uses: postman-cs/postman-resolve-service-token-action@v1
         with:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           write-github-secret: 'true'
@@ -134,7 +134,7 @@ Workflows that already store `POSTMAN_ACCESS_TOKEN` as a repo secret and pass it
 
 ```yaml
 - id: postman_token
-  uses: postman-cs/postman-resolve-service-token-action@v0
+  uses: postman-cs/postman-resolve-service-token-action@v1
   with:
     postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
     postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}   # skip mint
@@ -154,9 +154,9 @@ When both inputs are provided, the action is effectively a passthrough with `out
 
 ## Customer Preview Release Strategy
 
-- Customer Preview channel tags use `v0.x.y`.
-- Pin immutable tags such as `v0.1.0` for reproducibility.
-- Moving tag `v0` is the rolling customer preview channel.
+- Customer Preview channel tags use `v1.x.y`.
+- Pin immutable tags such as `v1.0.0` for reproducibility.
+- Moving tag `v1` is the rolling customer preview channel.
 - npm publishes use the matching package version and provenance.
 
 ## License
