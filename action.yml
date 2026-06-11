@@ -1,5 +1,5 @@
-name: postman-resolve-service-token-action
-description: Mint a Postman service-account access token, resolve the team ID, and optionally store both as repo secrets.
+name: Postman Service Token Resolver
+description: Mint a Postman service-account access token and team ID in CI, ready for the onboarding actions or repo secrets.
 author: Postman
 branding:
   icon: unlock

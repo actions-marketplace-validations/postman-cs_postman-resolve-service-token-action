@@ -1,23 +1,34 @@
-# postman-resolve-service-token-action
+# Postman Service Token Resolver
 
 [![CI](https://github.com/postman-cs/postman-resolve-service-token-action/actions/workflows/ci.yml/badge.svg)](https://github.com/postman-cs/postman-resolve-service-token-action/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/postman-cs/postman-resolve-service-token-action?sort=semver)](https://github.com/postman-cs/postman-resolve-service-token-action/releases)
 [![npm](https://img.shields.io/npm/v/%40postman-cse%2Fonboarding-resolve-service-token)](https://www.npmjs.com/package/@postman-cse/onboarding-resolve-service-token)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Public customer preview GitHub Action and npm CLI that mints a Postman service-account access token, resolves the team ID, and optionally writes both back to repo secrets.
+Mints a Postman service-account access token and team ID in CI, ready to hand to the Postman onboarding actions or store as repo secrets.
 
-This action is the producer side of the new programmatic token flow that replaces the manual session-token extraction step described in [`postman-cs/postman-api-onboarding-action`](https://github.com/postman-cs/postman-api-onboarding-action). Mint a fresh access token in CI, hand it to the onboarding action by output, or persist it as a repo secret for other workflows to consume.
+## Usage
 
-## When to use
+```yaml
+jobs:
+  resolve-token:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
 
-- **Inline minting per run.** Replace the inline mint snippet in [`postman-cs/postman-service-account-onboarding-sample`](https://github.com/postman-cs/postman-service-account-onboarding-sample) with a single `uses:` call that emits `outputs.token` and `outputs.team-id` for the next step.
-- **Scheduled refresh.** Run this action on a schedule with `write-github-secret: true` to rotate `POSTMAN_ACCESS_TOKEN` for downstream workflows that read it from `secrets`.
-- **Backward compatibility.** Pass an existing token through `postman-access-token` to skip the mint step entirely. The action returns the value verbatim, so workflows that already manage the token can adopt the action with no behavior change.
+      - id: postman_token
+        uses: postman-cs/postman-resolve-service-token-action@v1
+        with:
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+```
 
-## Quick start
+The step emits `outputs.token` and `outputs.team-id` for downstream steps. `postman-api-key` must be a **service-account** PMAK; the underlying `/service-account-tokens` endpoint rejects personal user keys.
 
-### Inline (mint, hand off to onboarding action)
+## Examples
+
+### Mint and hand off to the onboarding action
+
+Replace the inline mint snippet in [`postman-cs/postman-service-account-onboarding-sample`](https://github.com/postman-cs/postman-service-account-onboarding-sample) with a single `uses:` call that feeds the onboarding action directly:
 
 ```yaml
 jobs:
@@ -44,7 +55,9 @@ jobs:
           postman-team-id: ${{ steps.postman_token.outputs.team-id }}
 ```
 
-### Scheduled refresh (write `POSTMAN_ACCESS_TOKEN` for other workflows)
+### Scheduled secret refresh
+
+Run on a schedule with `write-github-secret: 'true'` to rotate `POSTMAN_ACCESS_TOKEN` for downstream workflows that read it from `secrets`:
 
 ```yaml
 name: Refresh Postman service-account token
@@ -65,30 +78,26 @@ jobs:
           github-token: ${{ secrets.SECRETS_WRITE_PAT }}
 ```
 
-## Inputs
+Writing repo secrets requires `github-token` to be a PAT or GitHub App installation token with secrets write permission on the target repo; the workflow `GITHUB_TOKEN` cannot write repo secrets and will fail. Recommended: a fine-grained PAT scoped to the target repo with **Secrets: Read and write** plus **Metadata: Read**, stored as a separate secret such as `SECRETS_WRITE_PAT`. If your org restricts fine-grained PATs, a short-lived classic PAT with the `repo` scope works as a fallback.
 
-| Input | Default | Notes |
-| --- | --- | --- |
-| `postman-api-key` | | Postman service-account API key (PMAK) used to mint the access token. Must be a **service-account** key, not a personal user key - the underlying `/service-account-tokens` endpoint requires service-account auth. Required when `postman-access-token` is not provided. |
-| `postman-access-token` | | Optional pre-existing access token. When set, the mint step is skipped and the value is returned verbatim. Use this to preserve existing workflows that manage the token externally. |
-| `postman-team-id` | | Optional pre-known team ID. When set, the `/me` lookup is skipped and the value is returned verbatim. |
-| `postman-stack` | `prod` | One of `prod` (`api.getpostman.com`) or `beta` (`api.getpostman-beta.com`). |
-| `write-github-secret` | `'false'` | When `'true'`, writes the resolved token and team ID to repo secrets. |
-| `access-token-secret-name` | `POSTMAN_ACCESS_TOKEN` | Secret name to receive the access token. Used only when `write-github-secret` is `'true'`. |
-| `team-id-secret-name` | `POSTMAN_TEAM_ID` | Secret name to receive the team ID. Used only when `write-github-secret` is `'true'`. |
-| `github-token` | | PAT or GitHub App installation token with secrets write permission on the target repo. Required when `write-github-secret` is `'true'`. The default `GITHUB_TOKEN` cannot write repo secrets. |
+### Pass through an existing token
 
-## Outputs
+Workflows that already store `POSTMAN_ACCESS_TOKEN` as a repo secret can adopt the action with no behavior change. When `postman-access-token` is provided the mint step is skipped and the value is returned verbatim; `postman-team-id` likewise skips the `/me` lookup:
 
-| Output | Description |
-| --- | --- |
-| `token` | Resolved Postman access token (masked in logs). Either freshly minted or the passed-through value of `postman-access-token`. |
-| `team-id` | Resolved Postman team ID. Either looked up via `/me` or the passed-through value of `postman-team-id`. |
-| `skipped` | `'true'` when the mint step was skipped because `postman-access-token` was provided. |
+```yaml
+- id: postman_token
+  uses: postman-cs/postman-resolve-service-token-action@v1
+  with:
+    postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+    postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}   # skip mint
+    postman-team-id: ${{ secrets.POSTMAN_TEAM_ID }}             # skip /me
+```
 
-## npm CLI
+When both inputs are provided the action is effectively a passthrough with `outputs.skipped == 'true'`. Removing the input values switches the workflow back to fresh minting on every run.
 
-Install or run the CLI when you need the same token resolution outside GitHub Actions:
+### npm CLI
+
+The same token resolution is available outside GitHub Actions:
 
 ```bash
 npx @postman-cse/onboarding-resolve-service-token \
@@ -116,34 +125,7 @@ postman-resolve-service-token \
 
 Secret persistence via `--write-github-secret true` is GitHub-repo specific and requires `gh`, `GITHUB_REPOSITORY`, and `--github-token`.
 
-## Permissions and secrets
-
-### Minting only (default)
-
-The default mode requires only `postman-api-key` (a service-account PMAK). No GitHub permissions beyond what your job already has.
-
-### Writing repo secrets
-
-`write-github-secret: 'true'` requires `github-token` to be a PAT or GitHub App installation token with **secrets write** permission on the target repo. The workflow `GITHUB_TOKEN` cannot write repo secrets and will fail.
-
-**Recommended:** create a fine-grained PAT scoped to the target repo with the **Secrets: Read and write** and **Metadata: Read** permissions, store it as a separate secret (for example `SECRETS_WRITE_PAT`), and pass it via `github-token`. If your org does not allow fine-grained PATs against its repos without prior approval, a classic PAT with the `repo` scope works as a fallback - keep its expiry short.
-
-## Backward compatibility
-
-Workflows that already store `POSTMAN_ACCESS_TOKEN` as a repo secret and pass it directly to downstream actions can adopt this action without disruption:
-
-```yaml
-- id: postman_token
-  uses: postman-cs/postman-resolve-service-token-action@v1
-  with:
-    postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
-    postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}   # skip mint
-    postman-team-id: ${{ secrets.POSTMAN_TEAM_ID }}             # skip /me
-```
-
-When both inputs are provided, the action is effectively a passthrough with `outputs.skipped == 'true'`. Removing the input values switches the workflow to fresh minting on every run.
-
-## Stack selection
+### Beta stack
 
 | `postman-stack` | API host |
 | --- | --- |
@@ -152,12 +134,51 @@ When both inputs are provided, the action is effectively a passthrough with `out
 
 `api.getpostman-beta.com` sits behind Postman Access. GitHub-hosted runners cannot reach it; use a self-hosted runner inside the Access perimeter for the `beta` stack. See [`postman-service-account-onboarding-sample`](https://github.com/postman-cs/postman-service-account-onboarding-sample) for the full beta runner setup.
 
-## Customer Preview Release Strategy
+## Inputs
 
-- Customer Preview channel tags use `v1.x.y`.
-- Pin immutable tags such as `v1.0.0` for reproducibility.
-- Moving tag `v1` is the rolling customer preview channel.
-- npm publishes use the matching package version and provenance.
+<!-- inputs-table:start -->
+| Name | Description | Required | Default |
+| --- | --- | --- | --- |
+| `postman-api-key` | Postman API key (PMAK) used to mint the service-account access token. Required when postman-access-token is not provided. | no |  |
+| `postman-access-token` | Optional pre-existing Postman access token. When provided, the mint step is skipped and this value is returned via outputs.token. Use this to preserve compatibility with workflows that already manage the token externally. | no |  |
+| `postman-team-id` | Optional pre-known Postman team ID. When provided, the team ID lookup is skipped and this value is returned via outputs.team-id. | no |  |
+| `postman-stack` | Postman stack profile. One of: prod (api.getpostman.com) or beta (api.getpostman-beta.com). | no | `prod` |
+| `write-github-secret` | When 'true', writes the resolved token and team ID to repo secrets named by access-token-secret-name and team-id-secret-name. Requires github-token to be a PAT (or GitHub App installation token) with secrets write permission on the target repo. The default GITHUB_TOKEN cannot write repo secrets. | no | `false` |
+| `access-token-secret-name` | Repo secret name to receive the resolved access token. Used only when write-github-secret is 'true'. | no | `POSTMAN_ACCESS_TOKEN` |
+| `team-id-secret-name` | Repo secret name to receive the resolved team ID. Used only when write-github-secret is 'true'. | no | `POSTMAN_TEAM_ID` |
+| `github-token` | GitHub PAT or App installation token with secrets write permission on the target repo. Required when write-github-secret is 'true'. | no |  |
+<!-- inputs-table:end -->
+
+## Outputs
+
+<!-- outputs-table:start -->
+| Name | Description |
+| --- | --- |
+| `token` | Resolved Postman access token. Either minted or passed through from the postman-access-token input. |
+| `team-id` | Resolved Postman team ID. Either looked up via /me or passed through from the postman-team-id input. |
+| `skipped` | 'true' when the mint step was skipped because postman-access-token was provided as input. |
+<!-- outputs-table:end -->
+
+## How it works
+
+This action is the producer side of the programmatic token flow that replaces the manual session-token extraction step described in [`postman-cs/postman-api-onboarding-action`](https://github.com/postman-cs/postman-api-onboarding-action). It calls the Postman `/service-account-tokens` endpoint with the service-account PMAK to mint a fresh access token, resolves the team ID via `/me`, and masks the token in logs.
+
+Both lookups honor explicit overrides: a provided `postman-access-token` or `postman-team-id` is returned verbatim and the corresponding API call is skipped, so existing workflows that manage the token externally can adopt the action incrementally.
+
+With `write-github-secret: 'true'` the resolved values are also written back to repo secrets (names configurable via `access-token-secret-name` and `team-id-secret-name`), which lets a scheduled run keep secrets fresh for every other workflow in the repo.
+
+Releases follow the customer preview channel: immutable `v1.x.y` tags for reproducible pins, a rolling `v1` alias for the latest preview, and npm publishes with matching versions and provenance.
+
+## Resources
+
+- [postman-api-onboarding-action](https://github.com/postman-cs/postman-api-onboarding-action): composite action that orchestrates the onboarding pipeline
+- [postman-bootstrap-action](https://github.com/postman-cs/postman-bootstrap-action): workspace, spec upload, collections, governance
+- [postman-smoke-flow-action](https://github.com/postman-cs/postman-smoke-flow-action): applies a curated flow.yaml to the Smoke collection
+- [postman-repo-sync-action](https://github.com/postman-cs/postman-repo-sync-action): artifact sync, environments, mocks, monitors
+- [postman-insights-onboarding-action](https://github.com/postman-cs/postman-insights-onboarding-action): Insights-to-workspace linking
+- [postman-aws-spec-discovery-action](https://github.com/postman-cs/postman-aws-spec-discovery-action): AWS API and spec discovery
+- [@postman-cse/onboarding-resolve-service-token on npm](https://www.npmjs.com/package/@postman-cse/onboarding-resolve-service-token)
+- [postman-service-account-onboarding-sample](https://github.com/postman-cs/postman-service-account-onboarding-sample): end-to-end sample workflows
 
 ## License
 
