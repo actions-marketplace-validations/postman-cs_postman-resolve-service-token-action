@@ -148,8 +148,14 @@ function extractAccessToken(payload: unknown): string | undefined {
     ?? stringifyCandidate(readPath(payload, ['session', 'token']));
 }
 
-function extractTeamId(payload: unknown): string | undefined {
-  const candidates = [
+interface MeIdentity {
+  teamId: string | undefined;
+  userId: string | undefined;
+  fullName: string | undefined;
+}
+
+function extractMeIdentity(payload: unknown): MeIdentity {
+  const teamIdCandidates = [
     ['user', 'teamId'],
     ['user', 'team'],
     ['teamId'],
@@ -159,12 +165,23 @@ function extractTeamId(payload: unknown): string | undefined {
     ['session', 'identity', 'team']
   ];
 
-  for (const path of candidates) {
-    const teamId = stringifyCandidate(readPath(payload, path));
-    if (teamId) return teamId;
+  let teamId: string | undefined;
+  for (const path of teamIdCandidates) {
+    teamId = stringifyCandidate(readPath(payload, path));
+    if (teamId) break;
   }
-  return undefined;
+
+  const userId =
+    stringifyCandidate(readPath(payload, ['user', 'id'])) ??
+    stringifyCandidate(readPath(payload, ['id']));
+
+  const fullName =
+    stringifyCandidate(readPath(payload, ['user', 'fullName'])) ??
+    stringifyCandidate(readPath(payload, ['fullName']));
+
+  return { teamId, userId, fullName };
 }
+
 
 function formatHttpErrorBody(body: string): string {
   const trimmed = body.trim();
@@ -183,7 +200,14 @@ async function mintServiceToken(inputs: ResolveInputs, apiHost: string, fetcher:
   });
   const body = await readResponseBody(response);
   if (!response.ok) {
-    throw new Error(`service-account-tokens failed (HTTP ${response.status})${formatHttpErrorBody(body)}`);
+    const status = response.status;
+    if (status === 401 || status === 403) {
+      throw new Error(`The postman-api-key was rejected (HTTP ${status}); confirm it is a valid, enabled PMAK for the intended team.`);
+    }
+    if (status === 400 && body.toLowerCase().includes('service accounts not enabled')) {
+      throw new Error('Service accounts are not enabled for this team; enable them in Team Settings or use a team where they are.');
+    }
+    throw new Error(`service-account-tokens failed (HTTP ${status})${formatHttpErrorBody(body)}`);
   }
   const token = extractAccessToken(parseJsonBody(body, 'service-account-tokens'));
   if (!token) {
@@ -192,7 +216,7 @@ async function mintServiceToken(inputs: ResolveInputs, apiHost: string, fetcher:
   return token;
 }
 
-async function resolveTeamId(inputs: ResolveInputs, apiHost: string, token: string, fetcher: Fetcher): Promise<string> {
+async function resolveTeamIdAndIdentity(inputs: ResolveInputs, apiHost: string, token: string, fetcher: Fetcher): Promise<MeIdentity & { teamId: string }> {
   const response = await fetcher(`${apiHost}/me`, {
     headers: createHeaders({
       Authorization: `Bearer ${token}`,
@@ -203,11 +227,11 @@ async function resolveTeamId(inputs: ResolveInputs, apiHost: string, token: stri
   if (!response.ok) {
     throw new Error(`/me failed (HTTP ${response.status})${formatHttpErrorBody(body)}`);
   }
-  const teamId = extractTeamId(parseJsonBody(body, '/me'));
-  if (!teamId) {
+  const identity = extractMeIdentity(parseJsonBody(body, '/me'));
+  if (!identity.teamId) {
     throw new Error('Could not read team id from /me response');
   }
-  return teamId;
+  return identity as MeIdentity & { teamId: string };
 }
 
 async function writeSecret(
@@ -267,9 +291,18 @@ export async function runResolveServiceToken(inputs: ResolveInputs, dependencies
     dependencies.core.info('Skipped mint - using provided postman-access-token.');
   }
 
-  const teamId = inputs.postmanTeamId ?? await resolveTeamId(inputs, apiHost, token, dependencies.fetcher);
+  let teamId: string;
   if (inputs.postmanTeamId) {
+    teamId = inputs.postmanTeamId;
     dependencies.core.info('Using provided postman-team-id.');
+  } else {
+    const identity = await resolveTeamIdAndIdentity(inputs, apiHost, token, dependencies.fetcher);
+    teamId = identity.teamId;
+    if (!skipped) {
+      const userId = identity.userId ?? 'unknown';
+      const fullName = identity.fullName ?? 'unknown';
+      dependencies.core.info(`resolve-service-token: minted access token for team ${teamId} (user ${userId} ${fullName})`);
+    }
   }
 
   const result: ResolveResult = { token, teamId, skipped };

@@ -86,8 +86,8 @@ function stringifyCandidate(value) {
 function extractAccessToken(payload) {
   return stringifyCandidate(readPath(payload, ["access_token"])) ?? stringifyCandidate(readPath(payload, ["session", "token"]));
 }
-function extractTeamId(payload) {
-  const candidates = [
+function extractMeIdentity(payload) {
+  const teamIdCandidates = [
     ["user", "teamId"],
     ["user", "team"],
     ["teamId"],
@@ -96,11 +96,14 @@ function extractTeamId(payload) {
     ["identity", "team"],
     ["session", "identity", "team"]
   ];
-  for (const path of candidates) {
-    const teamId = stringifyCandidate(readPath(payload, path));
-    if (teamId) return teamId;
+  let teamId;
+  for (const path of teamIdCandidates) {
+    teamId = stringifyCandidate(readPath(payload, path));
+    if (teamId) break;
   }
-  return void 0;
+  const userId = stringifyCandidate(readPath(payload, ["user", "id"])) ?? stringifyCandidate(readPath(payload, ["id"]));
+  const fullName = stringifyCandidate(readPath(payload, ["user", "fullName"])) ?? stringifyCandidate(readPath(payload, ["fullName"]));
+  return { teamId, userId, fullName };
 }
 function formatHttpErrorBody(body) {
   const trimmed = body.trim();
@@ -118,7 +121,14 @@ async function mintServiceToken(inputs, apiHost, fetcher) {
   });
   const body = await readResponseBody(response);
   if (!response.ok) {
-    throw new Error(`service-account-tokens failed (HTTP ${response.status})${formatHttpErrorBody(body)}`);
+    const status = response.status;
+    if (status === 401 || status === 403) {
+      throw new Error(`The postman-api-key was rejected (HTTP ${status}); confirm it is a valid, enabled PMAK for the intended team.`);
+    }
+    if (status === 400 && body.toLowerCase().includes("service accounts not enabled")) {
+      throw new Error("Service accounts are not enabled for this team; enable them in Team Settings or use a team where they are.");
+    }
+    throw new Error(`service-account-tokens failed (HTTP ${status})${formatHttpErrorBody(body)}`);
   }
   const token = extractAccessToken(parseJsonBody(body, "service-account-tokens"));
   if (!token) {
@@ -126,7 +136,7 @@ async function mintServiceToken(inputs, apiHost, fetcher) {
   }
   return token;
 }
-async function resolveTeamId(inputs, apiHost, token, fetcher) {
+async function resolveTeamIdAndIdentity(inputs, apiHost, token, fetcher) {
   const response = await fetcher(`${apiHost}/me`, {
     headers: createHeaders({
       Authorization: `Bearer ${token}`,
@@ -137,11 +147,11 @@ async function resolveTeamId(inputs, apiHost, token, fetcher) {
   if (!response.ok) {
     throw new Error(`/me failed (HTTP ${response.status})${formatHttpErrorBody(body)}`);
   }
-  const teamId = extractTeamId(parseJsonBody(body, "/me"));
-  if (!teamId) {
+  const identity = extractMeIdentity(parseJsonBody(body, "/me"));
+  if (!identity.teamId) {
     throw new Error("Could not read team id from /me response");
   }
-  return teamId;
+  return identity;
 }
 async function writeSecret(name, value, repository, githubToken, dependencies) {
   await dependencies.execFile("gh", ["secret", "set", name, "--repo", repository], {
@@ -188,9 +198,18 @@ async function runResolveServiceToken(inputs, dependencies) {
   if (skipped) {
     dependencies.core.info("Skipped mint - using provided postman-access-token.");
   }
-  const teamId = inputs.postmanTeamId ?? await resolveTeamId(inputs, apiHost, token, dependencies.fetcher);
+  let teamId;
   if (inputs.postmanTeamId) {
+    teamId = inputs.postmanTeamId;
     dependencies.core.info("Using provided postman-team-id.");
+  } else {
+    const identity = await resolveTeamIdAndIdentity(inputs, apiHost, token, dependencies.fetcher);
+    teamId = identity.teamId;
+    if (!skipped) {
+      const userId = identity.userId ?? "unknown";
+      const fullName = identity.fullName ?? "unknown";
+      dependencies.core.info(`resolve-service-token: minted access token for team ${teamId} (user ${userId} ${fullName})`);
+    }
   }
   const result = { token, teamId, skipped };
   dependencies.core.setOutput("token", result.token);
