@@ -1,5 +1,10 @@
 # postman-resolve-service-token-action
 
+[![CI](https://github.com/postman-cs/postman-resolve-service-token-action/actions/workflows/ci.yml/badge.svg)](https://github.com/postman-cs/postman-resolve-service-token-action/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/postman-cs/postman-resolve-service-token-action?sort=semver)](https://github.com/postman-cs/postman-resolve-service-token-action/releases)
+[![npm](https://img.shields.io/npm/v/%40postman-cse%2Fonboarding-resolve-service-token)](https://www.npmjs.com/package/@postman-cse/onboarding-resolve-service-token)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Public customer preview GitHub Action and npm CLI that mints a Postman service-account access token, resolves the team ID, and optionally writes both back to repo secrets.
 
 This action is the producer side of the new programmatic token flow that replaces the manual session-token extraction step described in [`postman-cs/postman-api-onboarding-action`](https://github.com/postman-cs/postman-api-onboarding-action). Mint a fresh access token in CI, hand it to the onboarding action by output, or persist it as a repo secret for other workflows to consume.
