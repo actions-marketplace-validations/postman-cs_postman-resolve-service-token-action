@@ -1,5 +1,5 @@
-name: Postman Service Token Resolver
-description: Mint a Postman service-account access token and team ID in CI, ready for the onboarding actions or repo secrets.
+name: 'Postman Onboarding: Service Token'
+description: Mint a Postman service-account access token and team ID in CI. Part of the Postman API Onboarding suite.
 author: Postman
 branding:
   icon: unlock

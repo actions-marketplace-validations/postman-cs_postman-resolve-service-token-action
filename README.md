@@ -1,8 +1,10 @@
-# Postman Service Token Resolver
+# Postman Onboarding: Service Token
 
 [![CI](https://github.com/postman-cs/postman-resolve-service-token-action/actions/workflows/ci.yml/badge.svg)](https://github.com/postman-cs/postman-resolve-service-token-action/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/postman-cs/postman-resolve-service-token-action?sort=semver)](https://github.com/postman-cs/postman-resolve-service-token-action/releases) [![npm](https://img.shields.io/npm/v/%40postman-cse%2Fonboarding-resolve-service-token)](https://www.npmjs.com/package/@postman-cse/onboarding-resolve-service-token) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Mints a Postman service-account access token and team ID in CI, ready to hand to the Postman onboarding actions or store as repo secrets.
+
+Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman-api-onboarding-action).
 
 ## Usage
 
@@ -167,6 +169,18 @@ With `write-github-secret: 'true'` the resolved values are also written back to 
 Releases follow the customer preview channel: immutable `v1.x.y` tags for reproducible pins, a rolling `v1` alias for the latest preview, and npm publishes with matching versions and provenance.
 
 ## Resources
+
+### The suite
+
+| Action | Role |
+| --- | --- |
+| [Postman API Onboarding](https://github.com/postman-cs/postman-api-onboarding-action) | Entry point: chains workspace bootstrap, repo sync, and optional Insights linking |
+| [Postman Onboarding: Service Token](https://github.com/postman-cs/postman-resolve-service-token-action) | Mints the service-account access token and team ID |
+| [Postman Onboarding: AWS Spec Discovery](https://github.com/postman-cs/postman-aws-spec-discovery-action) | Discovers and exports API specs from AWS services |
+| [Postman Onboarding: Workspace Bootstrap](https://github.com/postman-cs/postman-bootstrap-action) | Creates the workspace, uploads the spec, generates collections |
+| [Postman Onboarding: Smoke Flow](https://github.com/postman-cs/postman-smoke-flow-action) | Applies a curated flow.yaml to the Smoke collection |
+| [Postman Onboarding: Repo Sync](https://github.com/postman-cs/postman-repo-sync-action) | Exports artifacts into the repo and wires CI, mocks, and monitors |
+| [Postman Onboarding: Insights Linking](https://github.com/postman-cs/postman-insights-onboarding-action) | Links Insights discovered services to the workspace |
 
 - [postman-api-onboarding-action](https://github.com/postman-cs/postman-api-onboarding-action): composite action that orchestrates the onboarding pipeline
 - [postman-bootstrap-action](https://github.com/postman-cs/postman-bootstrap-action): workspace, spec upload, collections, governance
