@@ -1,11 +1,14 @@
 import { spawn } from 'node:child_process';
 
+import { createTelemetryContext } from './lib/telemetry.js';
+
 export type PostmanStack = 'prod' | 'beta';
 
 export interface ResolveInputs {
   postmanApiKey?: string;
   postmanAccessToken?: string;
   postmanTeamId?: string;
+  postmanRegion?: string;
   postmanStack?: string;
   writeGithubSecret: boolean;
   accessTokenSecretName: string;
@@ -21,6 +24,7 @@ export interface ResolveResult {
 
 export interface CoreLike {
   info(message: string): void;
+  warning?(message: string): void;
   setOutput(name: string, value: string): void;
   setSecret(value: string): void;
 }
@@ -65,9 +69,17 @@ function parseBooleanInput(name: string, value: string | undefined, defaultValue
   throw new Error(`${name} must be a boolean value: true or false`);
 }
 
-export function resolvePostmanApiHost(stackInput: string | undefined): string {
+export function resolvePostmanApiHost(stackInput: string | undefined, regionInput: string | undefined): string {
   const stack = normalizeOptional(stackInput) ?? 'prod';
+  const region = normalizeOptional(regionInput) ?? 'us';
+  if (region !== 'us' && region !== 'eu') {
+    throw new Error(`postman-region must be one of: us, eu; got: ${region}`);
+  }
+  if (stack === 'prod' && region === 'eu') return 'https://api.eu.postman.com';
   if (stack === 'prod') return 'https://api.getpostman.com';
+  if (stack === 'beta' && region === 'eu') {
+    throw new Error('postman-region=eu is only supported with postman-stack=prod');
+  }
   if (stack === 'beta') return 'https://api.getpostman-beta.com';
   throw new Error(`postman-stack must be one of: prod, beta; got: ${stack}`);
 }
@@ -77,6 +89,7 @@ export function readInputsFromAction(input: ActionInputReader): ResolveInputs {
     postmanApiKey: normalizeOptional(input.getInput('postman-api-key')),
     postmanAccessToken: normalizeOptional(input.getInput('postman-access-token')),
     postmanTeamId: normalizeOptional(input.getInput('postman-team-id')),
+    postmanRegion: normalizeOptional(input.getInput('postman-region')) ?? 'us',
     postmanStack: normalizeOptional(input.getInput('postman-stack')) ?? 'prod',
     writeGithubSecret: parseBooleanInput('write-github-secret', input.getInput('write-github-secret'), false),
     accessTokenSecretName: normalizeOptional(input.getInput('access-token-secret-name')) ?? DEFAULT_ACCESS_TOKEN_SECRET_NAME,
@@ -272,7 +285,7 @@ async function writeGitHubSecrets(result: ResolveResult, inputs: ResolveInputs, 
 }
 
 function validateInputs(inputs: ResolveInputs): void {
-  resolvePostmanApiHost(inputs.postmanStack);
+  resolvePostmanApiHost(inputs.postmanStack, inputs.postmanRegion);
   if (!inputs.postmanAccessToken && !inputs.postmanApiKey) {
     throw new Error('postman-api-key is required when postman-access-token is not provided.');
   }
@@ -281,14 +294,34 @@ function validateInputs(inputs: ResolveInputs): void {
   }
 }
 
+function warn(core: CoreLike, message: string): void {
+  if (core.warning) {
+    core.warning(message);
+    return;
+  }
+  core.info(message);
+}
+
 export async function runResolveServiceToken(inputs: ResolveInputs, dependencies: ResolveDependencies): Promise<ResolveResult> {
+  const telemetry = createTelemetryContext({ action: 'postman-resolve-service-token-action', logger: dependencies.core });
+  try {
+    const result = await runResolveServiceTokenInner(inputs, dependencies, telemetry);
+    telemetry.emitCompletion('success');
+    return result;
+  } catch (error) {
+    telemetry.emitCompletion('failure');
+    throw error;
+  }
+}
+
+async function runResolveServiceTokenInner(inputs: ResolveInputs, dependencies: ResolveDependencies, telemetry: ReturnType<typeof createTelemetryContext>): Promise<ResolveResult> {
   validateInputs(inputs);
-  const apiHost = resolvePostmanApiHost(inputs.postmanStack);
+  const apiHost = resolvePostmanApiHost(inputs.postmanStack, inputs.postmanRegion);
   const skipped = Boolean(inputs.postmanAccessToken);
   const token = inputs.postmanAccessToken ?? await mintServiceToken(inputs, apiHost, dependencies.fetcher);
   dependencies.core.setSecret(token);
   if (skipped) {
-    dependencies.core.info('Skipped mint - using provided postman-access-token.');
+    warn(dependencies.core, 'Using a provided postman-access-token. Prefer minting a fresh service-account token with postman-api-key unless this workflow intentionally manages token rotation outside this action.');
   }
 
   let teamId: string;
@@ -305,6 +338,7 @@ export async function runResolveServiceToken(inputs: ResolveInputs, dependencies
     }
   }
 
+  telemetry.setTeamId(teamId);
   const result: ResolveResult = { token, teamId, skipped };
   dependencies.core.setOutput('token', result.token);
   dependencies.core.setOutput('team-id', result.teamId);

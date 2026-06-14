@@ -16,4 +16,6 @@ You should receive an acknowledgement within five business days. Please include 
 ## Scope Notes
 
 - This action handles Postman API keys and access tokens. Both are masked in logs by the action itself; never echo them in your own workflow steps.
+- The recommended path is service-account token minting from `postman-api-key`. Passing `postman-access-token` is supported for compatibility, but token rotation remains your responsibility.
 - Reports about secrets you exposed in your own workflow configuration are out of scope; rotate the credential in Postman immediately.
+- Do not include live PMAKs, access tokens, GitHub tokens, or private workflow logs in public issues.
