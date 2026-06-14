@@ -6,7 +6,7 @@ Recommended credential producer for the Postman API Onboarding suite. It mints a
 
 Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman-api-onboarding-action).
 
-## Quick Start
+## Quick start
 
 Use this action before `postman-api-onboarding-action`. Set `postman-region` to the [data residency](https://learning.postman.com/docs/administration/enterprise/about-eu-data-residency/) region for the target Postman team.
 
@@ -38,7 +38,7 @@ jobs:
 
 The step emits `outputs.token` and `outputs.team-id` for downstream steps. `postman-api-key` must be a [Postman service account](https://learning.postman.com/docs/administration/service-accounts/) PMAK; the underlying `/service-account-tokens` endpoint rejects personal user keys.
 
-## Which Action Should I Use?
+## Which action should I use?
 
 | Action | Use when | Consumes | Produces |
 | --- | --- | --- | --- |
@@ -50,7 +50,7 @@ The step emits `outputs.token` and `outputs.team-id` for downstream steps. `post
 | [Postman Onboarding: Repo Sync](https://github.com/postman-cs/postman-repo-sync-action) | You only need generated artifacts committed back to the repo | Bootstrap outputs | `.postman/` resources, collections, CI templates |
 | [Postman Onboarding: Insights Linking](https://github.com/postman-cs/postman-insights-onboarding-action) | You only need to link an Insights service to a workspace | Workspace and service identifiers | Insights link state |
 
-## Region And Stack
+## Region and stack
 
 Most workflows only need `postman-region`. Use `us` unless your Postman team uses [EU data residency](https://learning.postman.com/docs/administration/enterprise/about-eu-data-residency/).
 
@@ -59,7 +59,7 @@ Most workflows only need `postman-region`. Use `us` unless your Postman team use
 | `postman-region: us` | `https://api.getpostman.com` | Default public Postman API host |
 | `postman-region: eu` | `https://api.eu.postman.com` | EU data residency host |
 
-## Authentication Matrix
+## Authentication matrix
 
 | Path | Use for | Required inputs | Permissions and expiry | Notes |
 | --- | --- | --- | --- | --- |
@@ -230,7 +230,7 @@ Releases follow the stable `v1` channel: immutable `v1.x.y` tags for reproducibl
 This action sends a single anonymous usage event when a run completes, so the
 Postman team can measure adoption across CI systems. The event contains the
 action name and version, your Postman team ID, the detected CI provider and
-runner kind, the run outcome, and a one-way SHA-256 hash of the repository
+runner kind, the run outcome, the CI run identifier, an event timestamp, and a one-way SHA-256 hash of the repository
 identifier. The Postman team ID is sent in the clear on a legitimate-interest
 basis to measure product adoption.
 
