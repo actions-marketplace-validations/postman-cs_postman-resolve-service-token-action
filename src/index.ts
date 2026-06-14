@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 
-import { createTelemetryContext } from './lib/telemetry.js';
+import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 
 export type PostmanStack = 'prod' | 'beta';
 
@@ -306,9 +306,11 @@ export async function runResolveServiceToken(inputs: ResolveInputs, dependencies
   const telemetry = createTelemetryContext({ action: 'postman-resolve-service-token-action', logger: dependencies.core });
   try {
     const result = await runResolveServiceTokenInner(inputs, dependencies, telemetry);
+    telemetry.setAccountType('service_account');
     telemetry.emitCompletion('success');
     return result;
   } catch (error) {
+    telemetry.setAccountType('service_account');
     telemetry.emitCompletion('failure');
     throw error;
   }
