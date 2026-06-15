@@ -22,8 +22,8 @@ npm run check:dist   # build + git diff --exit-code (CI integrity)
 
 ## Key Behaviors
 
-- Exchanges a service-account credential for a short-lived Postman access token; the token is the suite's preferred Bifrost/governance credential (it can expire, so this action is meant to run first in CI).
-- Resolves team ID via session identity (`credential-identity.ts`), not by trusting a free `teamId` param.
+- Mints a short-lived service-account access token; the token is the suite's preferred Bifrost/governance credential and can expire, so this action is meant to run first in CI.
+- Resolves team ID by calling `GET /me` with the minted token and reading the team field out of the response, walking a list of candidate paths (`credential-identity.ts`, memoized for the run).
 - `account_type` for this producer is always `service` in suite telemetry.
 - Outputs are masked before logging; the minted token never appears in clear in logs or artifacts.
 
