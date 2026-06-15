@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const HIDDEN_INPUTS = new Set(['postman-stack']);
 
 function unquote(value) {
   const trimmed = value.trim();
@@ -53,7 +54,7 @@ function cell(value) {
 }
 
 function renderInputs(inputs) {
-  const rows = inputs.map((input) => {
+  const rows = inputs.filter((input) => !HIDDEN_INPUTS.has(input.name)).map((input) => {
     const required = input.required ? 'yes' : 'no';
     const def = input.default ? `\`${cell(input.default)}\`` : '';
     return `| \`${input.name}\` | ${cell(input.description)} | ${required} | ${def} |`;

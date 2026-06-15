@@ -1,7 +1,7 @@
 {
   "name": "@postman-cse/onboarding-resolve-service-token",
-  "version": "1.0.2",
-  "description": "Public customer preview Postman service token resolver GitHub Action and CLI.",
+  "version": "1.0.4",
+  "description": "Recommended Postman service-account token producer for GitHub Actions and CLI.",
   "type": "module",
   "main": "dist/index.cjs",
   "bin": {
@@ -12,7 +12,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "npm run typecheck && rm -rf dist && esbuild src/main.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/index.cjs && esbuild src/cli.ts --bundle --platform=node --target=node24 --format=cjs --banner:js='#!/usr/bin/env node' --outfile=dist/cli.cjs",
+    "build": "npm run typecheck && rm -rf dist && esbuild src/main.ts --bundle --platform=node --target=node24 --format=cjs --define:__ACTION_VERSION__=\\\"$npm_package_version\\\" --outfile=dist/index.cjs && esbuild src/cli.ts --bundle --platform=node --target=node24 --format=cjs --define:__ACTION_VERSION__=\\\"$npm_package_version\\\" --banner:js='#!/usr/bin/env node' --outfile=dist/cli.cjs",
     "check:dist": "npm run build && git diff --exit-code -- dist",
     "docs:tables": "node scripts/render-action-tables.mjs --write",
     "lint": "eslint .",
@@ -22,7 +22,10 @@
   },
   "keywords": [
     "github-action",
-    "postman"
+    "postman",
+    "postman-api-onboarding",
+    "service-account",
+    "access-token"
   ],
   "license": "MIT",
   "publishConfig": {
@@ -33,7 +36,9 @@
     "picomatch": ">=4.0.4"
   },
   "dependencies": {
-    "@actions/core": "^3.0.1"
+    "@actions/core": "^3.0.1",
+    "@postman-cse/automation-telemetry-core": "^0.2.0",
+    "undici": "^6.24.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

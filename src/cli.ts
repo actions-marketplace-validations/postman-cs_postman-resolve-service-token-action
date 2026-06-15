@@ -9,6 +9,7 @@ const cliInputNames = [
   'postman-api-key',
   'postman-access-token',
   'postman-team-id',
+  'postman-region',
   'postman-stack',
   'write-github-secret',
   'access-token-secret-name',

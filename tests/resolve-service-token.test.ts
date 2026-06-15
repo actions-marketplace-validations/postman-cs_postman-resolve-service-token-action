@@ -6,14 +6,19 @@ function createCore() {
   const outputs: Record<string, string> = {};
   const secrets: string[] = [];
   const infos: string[] = [];
+  const warnings: string[] = [];
 
   return {
     outputs,
     secrets,
     infos,
+    warnings,
     core: {
       info(message: string) {
         infos.push(message);
+      },
+      warning(message: string) {
+        warnings.push(message);
       },
       setOutput(name: string, value: string) {
         outputs[name] = value;
@@ -41,6 +46,7 @@ describe('runResolveServiceToken', () => {
     const result = await runResolveServiceToken({
       postmanAccessToken: 'existing-token',
       postmanTeamId: 'team-123',
+      postmanRegion: 'us',
       postmanStack: 'prod',
       writeGithubSecret: false,
       accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
@@ -58,6 +64,9 @@ describe('runResolveServiceToken', () => {
       skipped: 'true'
     });
     expect(harness.secrets).toEqual(['existing-token']);
+    expect(harness.warnings).toEqual([
+      'Using a provided postman-access-token. Prefer minting a fresh service-account token with postman-api-key unless this workflow intentionally manages token rotation outside this action.'
+    ]);
   });
 
   test('mints a token and resolves team ID from prod APIs', async () => {
@@ -79,6 +88,7 @@ describe('runResolveServiceToken', () => {
 
     const result = await runResolveServiceToken({
       postmanApiKey: 'pmak-service',
+      postmanRegion: 'us',
       postmanStack: 'prod',
       writeGithubSecret: false,
       accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
@@ -130,6 +140,7 @@ describe('runResolveServiceToken', () => {
     await runResolveServiceToken({
       postmanAccessToken: 'existing-token',
       postmanTeamId: 'team-123',
+      postmanRegion: 'us',
       postmanStack: 'prod',
       writeGithubSecret: true,
       githubToken: 'ghp-token',
@@ -165,5 +176,37 @@ describe('runResolveServiceToken', () => {
       fetcher: fetch,
       execFile: async () => ({ stdout: '', stderr: '' })
     })).rejects.toThrow('postman-api-key is required when postman-access-token is not provided.');
+  });
+
+  test('uses the EU Postman API host when postman-region is eu', async () => {
+    const harness = createCore();
+    const calls: string[] = [];
+    const dependencies: ResolveDependencies = {
+      core: harness.core,
+      fetcher: async (url) => {
+        calls.push(String(url));
+        if (String(url).endsWith('/service-account-tokens')) {
+          return new Response(JSON.stringify({ session: { token: 'minted-token' } }), { status: 201 });
+        }
+        return new Response(JSON.stringify({ user: { teamId: 'team-eu' } }), { status: 200 });
+      },
+      execFile: async () => {
+        throw new Error('exec should not be called');
+      }
+    };
+
+    await runResolveServiceToken({
+      postmanApiKey: 'pmak-service',
+      postmanRegion: 'eu',
+      postmanStack: 'prod',
+      writeGithubSecret: false,
+      accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
+      teamIdSecretName: 'POSTMAN_TEAM_ID'
+    }, dependencies);
+
+    expect(calls).toEqual([
+      'https://api.eu.postman.com/service-account-tokens',
+      'https://api.eu.postman.com/me'
+    ]);
   });
 });

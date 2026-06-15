@@ -6,7 +6,11 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -8746,7 +8750,7 @@ var require_env_http_proxy_agent = __commonJS({
       "https:": 443
     };
     var experimentalWarned = false;
-    var EnvHttpProxyAgent = class extends DispatcherBase {
+    var EnvHttpProxyAgent2 = class extends DispatcherBase {
       #noProxyValue = null;
       #noProxyEntries = null;
       #opts = null;
@@ -8865,7 +8869,7 @@ var require_env_http_proxy_agent = __commonJS({
         return process.env.no_proxy ?? process.env.NO_PROXY ?? "";
       }
     };
-    module2.exports = EnvHttpProxyAgent;
+    module2.exports = EnvHttpProxyAgent2;
   }
 });
 
@@ -18538,7 +18542,7 @@ var require_undici = __commonJS({
     var BalancedPool = require_balanced_pool();
     var Agent3 = require_agent();
     var ProxyAgent2 = require_proxy_agent();
-    var EnvHttpProxyAgent = require_env_http_proxy_agent();
+    var EnvHttpProxyAgent2 = require_env_http_proxy_agent();
     var RetryAgent = require_retry_agent();
     var errors = require_errors();
     var util = require_util();
@@ -18561,7 +18565,7 @@ var require_undici = __commonJS({
     module2.exports.BalancedPool = BalancedPool;
     module2.exports.Agent = Agent3;
     module2.exports.ProxyAgent = ProxyAgent2;
-    module2.exports.EnvHttpProxyAgent = EnvHttpProxyAgent;
+    module2.exports.EnvHttpProxyAgent = EnvHttpProxyAgent2;
     module2.exports.RetryAgent = RetryAgent;
     module2.exports.RetryHandler = RetryHandler;
     module2.exports.DecoratorHandler = DecoratorHandler;
@@ -20945,6 +20949,384 @@ function getIDToken(aud) {
 
 // src/index.ts
 var import_node_child_process = require("node:child_process");
+
+// node_modules/@postman-cse/automation-telemetry-core/dist/ci-context.js
+function norm(value) {
+  const trimmed = (value ?? "").trim();
+  return trimmed.length > 0 ? trimmed : void 0;
+}
+function detectEventTrigger(env = process.env) {
+  const ghEvent = norm(env.GITHUB_EVENT_NAME)?.toLowerCase();
+  if (ghEvent) {
+    if (ghEvent === "push")
+      return "push";
+    if (ghEvent === "pull_request" || ghEvent === "pull_request_target")
+      return "pull_request";
+    if (ghEvent === "schedule")
+      return "schedule";
+    if (ghEvent === "workflow_dispatch" || ghEvent === "repository_dispatch")
+      return "manual";
+    return "other";
+  }
+  const glSource = norm(env.CI_PIPELINE_SOURCE)?.toLowerCase();
+  if (glSource) {
+    if (glSource === "push")
+      return "push";
+    if (glSource === "merge_request_event")
+      return "pull_request";
+    if (glSource === "schedule")
+      return "schedule";
+    if (glSource === "web" || glSource === "api" || glSource === "trigger" || glSource === "pipeline") {
+      return "manual";
+    }
+    return "other";
+  }
+  if (norm(env.BITBUCKET_PR_ID))
+    return "pull_request";
+  if (norm(env.CI) || norm(env.BUILD_BUILDID) || norm(env.JENKINS_URL) || norm(env.TEAMCITY_VERSION)) {
+    return "other";
+  }
+  return "unknown";
+}
+function detectRunnerOs(env = process.env) {
+  const runnerOs = norm(env.RUNNER_OS)?.toLowerCase();
+  if (runnerOs === "linux")
+    return "linux";
+  if (runnerOs === "macos")
+    return "macos";
+  if (runnerOs === "windows")
+    return "windows";
+  const platform2 = typeof process !== "undefined" ? process.platform : void 0;
+  if (platform2 === "linux")
+    return "linux";
+  if (platform2 === "darwin")
+    return "macos";
+  if (platform2 === "win32")
+    return "windows";
+  return "unknown";
+}
+function detectCiContext(env = process.env) {
+  const provider = detectCiProviderContext(env);
+  return {
+    ...provider,
+    eventTrigger: detectEventTrigger(env),
+    runnerOs: detectRunnerOs(env)
+  };
+}
+function detectCiProviderContext(env = process.env) {
+  if (norm(env.GITHUB_ACTIONS)) {
+    const runnerEnv = norm(env.RUNNER_ENVIRONMENT);
+    const runnerKind = runnerEnv === "github-hosted" ? "hosted" : runnerEnv === "self-hosted" ? "self-hosted" : "unknown";
+    return {
+      ciProvider: "github",
+      runId: norm(env.GITHUB_RUN_ID),
+      runnerKind
+    };
+  }
+  if (norm(env.GITLAB_CI)) {
+    return {
+      ciProvider: "gitlab",
+      runId: norm(env.CI_PIPELINE_ID) ?? norm(env.CI_PIPELINE_IID),
+      runnerKind: "unknown"
+    };
+  }
+  if (norm(env.CIRCLECI)) {
+    return {
+      ciProvider: "circleci",
+      runId: norm(env.CIRCLE_WORKFLOW_ID) ?? norm(env.CIRCLE_BUILD_NUM),
+      runnerKind: "unknown"
+    };
+  }
+  if (norm(env.BUILDKITE)) {
+    const computeType = norm(env.BUILDKITE_COMPUTE_TYPE);
+    const runnerKind = computeType === "hosted" ? "hosted" : computeType === "self-hosted" ? "self-hosted" : "unknown";
+    return {
+      ciProvider: "buildkite",
+      runId: norm(env.BUILDKITE_BUILD_ID) ?? norm(env.BUILDKITE_BUILD_NUMBER),
+      runnerKind
+    };
+  }
+  if (norm(env.TF_BUILD)) {
+    return {
+      ciProvider: "azure",
+      runId: norm(env.BUILD_BUILDID),
+      runnerKind: "unknown"
+    };
+  }
+  if (norm(env.CODEBUILD_BUILD_ID)) {
+    return {
+      ciProvider: "codebuild",
+      runId: norm(env.CODEBUILD_BUILD_ID),
+      runnerKind: "unknown"
+    };
+  }
+  if (norm(env.BITBUCKET_BUILD_NUMBER)) {
+    return {
+      ciProvider: "bitbucket",
+      runId: norm(env.BITBUCKET_BUILD_NUMBER),
+      runnerKind: "unknown"
+    };
+  }
+  if (norm(env.TEAMCITY_VERSION)) {
+    return {
+      ciProvider: "teamcity",
+      runId: norm(env.BUILD_NUMBER),
+      runnerKind: "self-hosted"
+    };
+  }
+  if (norm(env.HARNESS_BUILD_ID)) {
+    return {
+      ciProvider: "harness",
+      runId: norm(env.HARNESS_EXECUTION_ID) ?? norm(env.HARNESS_BUILD_ID),
+      runnerKind: "unknown"
+    };
+  }
+  if (norm(env.JENKINS_URL)) {
+    return {
+      ciProvider: "jenkins",
+      runId: norm(env.BUILD_ID) ?? norm(env.BUILD_NUMBER) ?? norm(env.BUILD_TAG),
+      runnerKind: "self-hosted"
+    };
+  }
+  if (norm(env.ATC_EXTERNAL_URL) || norm(env.BUILD_ID) && norm(env.BUILD_PIPELINE_NAME)) {
+    return {
+      ciProvider: "concourse",
+      runId: norm(env.BUILD_ID) ?? norm(env.BUILD_NAME),
+      runnerKind: "self-hosted"
+    };
+  }
+  if (norm(env.CI)) {
+    return { ciProvider: "other", runnerKind: "unknown" };
+  }
+  return { ciProvider: "unknown", runnerKind: "unknown" };
+}
+
+// node_modules/@postman-cse/automation-telemetry-core/dist/repo-context.js
+function normalize(value) {
+  const trimmed = (value ?? "").trim();
+  return trimmed.length > 0 ? trimmed : void 0;
+}
+function normalizeRepoUrl(url) {
+  const raw = normalize(url);
+  if (!raw) {
+    return void 0;
+  }
+  const sshMatch = raw.match(/^git@([^:]+):(.+?)(?:\.git)?$/);
+  if (sshMatch) {
+    const host = sshMatch[1];
+    const path6 = sshMatch[2];
+    return `https://${host}/${path6}`;
+  }
+  return raw.replace(/\.git$/, "");
+}
+function parseProvider(explicitProvider, repoUrl, env) {
+  const explicit = normalize(explicitProvider)?.toLowerCase();
+  if (explicit === "github" || explicit === "gitlab" || explicit === "bitbucket" || explicit === "azure-devops") {
+    return explicit;
+  }
+  const url = (repoUrl ?? "").toLowerCase();
+  if (url.includes("github")) {
+    return "github";
+  }
+  if (url.includes("gitlab")) {
+    return "gitlab";
+  }
+  if (url.includes("bitbucket")) {
+    return "bitbucket";
+  }
+  if (url.includes("dev.azure.com") || url.includes("visualstudio.com")) {
+    return "azure-devops";
+  }
+  if (normalize(env.GITHUB_REPOSITORY)) {
+    return "github";
+  }
+  if (normalize(env.CI_PROJECT_PATH) || normalize(env.GITLAB_CI)) {
+    return "gitlab";
+  }
+  if (normalize(env.BITBUCKET_REPO_SLUG)) {
+    return "bitbucket";
+  }
+  if (normalize(env.BUILD_REPOSITORY_URI)) {
+    return "azure-devops";
+  }
+  return "unknown";
+}
+function classifyRefKind(env = process.env) {
+  const githubRefType = normalize(env.GITHUB_REF_TYPE)?.toLowerCase();
+  const githubRef = normalize(env.GITHUB_REF);
+  const azureRef = normalize(env.BUILD_SOURCEBRANCH);
+  if (githubRefType === "tag" || githubRef?.startsWith("refs/tags/") || normalize(env.CI_COMMIT_TAG) || normalize(env.BITBUCKET_TAG) || azureRef?.startsWith("refs/tags/")) {
+    return "tag";
+  }
+  const githubRefName = normalize(env.GITHUB_REF_NAME);
+  const githubDefault = normalize(env.GITHUB_DEFAULT_BRANCH);
+  if (githubRefName && githubDefault) {
+    return githubRefName === githubDefault ? "default-branch" : "branch";
+  }
+  const gitlabRef = normalize(env.CI_COMMIT_REF_NAME);
+  const gitlabDefault = normalize(env.CI_DEFAULT_BRANCH);
+  if (gitlabRef && gitlabDefault) {
+    return gitlabRef === gitlabDefault ? "default-branch" : "branch";
+  }
+  if (githubRefName || githubRef?.startsWith("refs/heads/") || gitlabRef || normalize(env.BITBUCKET_BRANCH) || normalize(env.BUILD_SOURCEBRANCHNAME) || azureRef?.startsWith("refs/heads/")) {
+    return "branch";
+  }
+  return "unknown";
+}
+function detectRepoContext(input, env = process.env) {
+  const repoUrl = normalizeRepoUrl(input.repoUrl) ?? normalizeRepoUrl(env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}` : void 0) ?? normalizeRepoUrl(env.CI_PROJECT_URL) ?? normalizeRepoUrl(env.BITBUCKET_GIT_HTTP_ORIGIN) ?? normalizeRepoUrl(env.BUILD_REPOSITORY_URI);
+  const repoSlug = normalize(input.repoSlug) ?? normalize(env.GITHUB_REPOSITORY) ?? normalize(env.CI_PROJECT_PATH) ?? (env.BITBUCKET_WORKSPACE && env.BITBUCKET_REPO_SLUG ? normalize(`${env.BITBUCKET_WORKSPACE}/${env.BITBUCKET_REPO_SLUG}`) : void 0) ?? normalize(env.BUILD_REPOSITORY_NAME);
+  const ref = normalize(input.ref) ?? normalize(env.GITHUB_REF_NAME) ?? normalize(env.CI_COMMIT_REF_NAME) ?? normalize(env.BITBUCKET_BRANCH) ?? normalize(env.BUILD_SOURCEBRANCHNAME);
+  const sha = normalize(input.sha) ?? normalize(env.GITHUB_SHA) ?? normalize(env.CI_COMMIT_SHA) ?? normalize(env.BITBUCKET_COMMIT) ?? normalize(env.BUILD_SOURCEVERSION);
+  const provider = parseProvider(input.gitProvider, repoUrl, env);
+  const refKind = classifyRefKind(env);
+  return {
+    provider,
+    repoUrl,
+    repoSlug,
+    ref,
+    sha,
+    refKind
+  };
+}
+
+// node_modules/@postman-cse/automation-telemetry-core/dist/telemetry.js
+var import_node_crypto = require("node:crypto");
+var import_undici2 = __toESM(require_undici(), 1);
+var SCHEMA_VERSION = 3;
+var DEFAULT_TIMEOUT_MS = 1500;
+var DEFAULT_ENDPOINT = "https://events.pm-cse.dev/v1/events";
+var proxyDispatcher;
+function getProxyDispatcher() {
+  return proxyDispatcher ??= new import_undici2.EnvHttpProxyAgent();
+}
+function resolveActionVersion(explicit) {
+  if (explicit) {
+    return explicit;
+  }
+  return "1.0.4" ? "1.0.4" : "unknown";
+}
+function telemetryDisabled(env) {
+  const flag = String(env.POSTMAN_ACTIONS_TELEMETRY ?? "").trim().toLowerCase();
+  if (flag === "off" || flag === "0" || flag === "false" || flag === "no") {
+    return true;
+  }
+  const dnt = String(env.DO_NOT_TRACK ?? "").trim().toLowerCase();
+  if (dnt && dnt !== "0" && dnt !== "false") {
+    return true;
+  }
+  return false;
+}
+function sha256(value) {
+  return (0, import_node_crypto.createHash)("sha256").update(value).digest("hex");
+}
+function accountTypeFromConsumer(consumerType) {
+  const t = (consumerType ?? "").trim().toLowerCase();
+  if (!t) {
+    return "unknown";
+  }
+  return t === "service_account" ? "service" : "user";
+}
+var noticeShown = false;
+function maybeNotice(logger) {
+  if (noticeShown || !logger) {
+    return;
+  }
+  noticeShown = true;
+  logger.info("note: postman-actions sends anonymous usage data (team id, action, CI provider, account type, run trigger, runner OS). Disable with POSTMAN_ACTIONS_TELEMETRY=off or DO_NOT_TRACK=1.");
+}
+function buildTelemetryEvent(params) {
+  const { action, actionVersion, teamId, accountType, outcome, env, now } = params;
+  const ci = detectCiContext(env);
+  const repo = detectRepoContext({}, env);
+  const repoSlug = repo.repoSlug;
+  const repoSource = repoSlug ?? repo.repoUrl;
+  const owner = repoSlug && repoSlug.includes("/") ? repoSlug.split("/")[0] : void 0;
+  return {
+    schema_version: SCHEMA_VERSION,
+    event: "completion",
+    action,
+    action_version: actionVersion || "unknown",
+    team_id: teamId,
+    ci_provider: ci.ciProvider,
+    git_provider: repo.provider,
+    run_id: ci.runId,
+    runner_kind: ci.runnerKind,
+    repo_id: repoSource ? sha256(repoSource) : void 0,
+    org_id: owner ? sha256(owner) : void 0,
+    account_type: accountType,
+    event_trigger: ci.eventTrigger,
+    runner_os: ci.runnerOs,
+    ref_kind: repo.refKind,
+    outcome,
+    ts: now()
+  };
+}
+async function send(event, options) {
+  const env = options.env ?? process.env;
+  const endpoint = options.endpoint ?? env.POSTMAN_ACTIONS_TELEMETRY_ENDPOINT ?? DEFAULT_ENDPOINT;
+  const transport = options.transport ?? import_undici2.fetch;
+  const dispatcher = options.dispatcher ?? getProxyDispatcher();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  timer.unref?.();
+  const init = {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(event),
+    signal: controller.signal
+  };
+  init.dispatcher = dispatcher;
+  try {
+    await transport(endpoint, init);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function createTelemetryContext(options) {
+  const env = options.env ?? process.env;
+  const now = options.now ?? Date.now;
+  const actionVersion = resolveActionVersion(options.actionVersion);
+  let teamId = "";
+  let accountType = "unknown";
+  let emitted = false;
+  return {
+    setTeamId(value) {
+      if (value) {
+        teamId = String(value);
+      }
+    },
+    setAccountType(consumerType) {
+      accountType = accountTypeFromConsumer(consumerType);
+    },
+    emitCompletion(outcome) {
+      if (emitted) {
+        return;
+      }
+      emitted = true;
+      try {
+        if (telemetryDisabled(env) || !teamId) {
+          return;
+        }
+        const event = buildTelemetryEvent({
+          action: options.action,
+          actionVersion,
+          teamId,
+          accountType,
+          outcome,
+          env,
+          now
+        });
+        maybeNotice(options.logger);
+        void send(event, options).catch(() => {
+        });
+      } catch {
+      }
+    }
+  };
+}
+
+// src/index.ts
 var DEFAULT_ACCESS_TOKEN_SECRET_NAME = "POSTMAN_ACCESS_TOKEN";
 var DEFAULT_TEAM_ID_SECRET_NAME = "POSTMAN_TEAM_ID";
 function normalizeOptional(value) {
@@ -20958,9 +21340,17 @@ function parseBooleanInput(name, value, defaultValue) {
   if (["false", "0", "no", "off"].includes(normalized)) return false;
   throw new Error(`${name} must be a boolean value: true or false`);
 }
-function resolvePostmanApiHost(stackInput) {
+function resolvePostmanApiHost(stackInput, regionInput) {
   const stack = normalizeOptional(stackInput) ?? "prod";
+  const region = normalizeOptional(regionInput) ?? "us";
+  if (region !== "us" && region !== "eu") {
+    throw new Error(`postman-region must be one of: us, eu; got: ${region}`);
+  }
+  if (stack === "prod" && region === "eu") return "https://api.eu.postman.com";
   if (stack === "prod") return "https://api.getpostman.com";
+  if (stack === "beta" && region === "eu") {
+    throw new Error("postman-region=eu is only supported with postman-stack=prod");
+  }
   if (stack === "beta") return "https://api.getpostman-beta.com";
   throw new Error(`postman-stack must be one of: prod, beta; got: ${stack}`);
 }
@@ -20969,6 +21359,7 @@ function readInputsFromAction(input) {
     postmanApiKey: normalizeOptional(input.getInput("postman-api-key")),
     postmanAccessToken: normalizeOptional(input.getInput("postman-access-token")),
     postmanTeamId: normalizeOptional(input.getInput("postman-team-id")),
+    postmanRegion: normalizeOptional(input.getInput("postman-region")) ?? "us",
     postmanStack: normalizeOptional(input.getInput("postman-stack")) ?? "prod",
     writeGithubSecret: parseBooleanInput("write-github-secret", input.getInput("write-github-secret"), false),
     accessTokenSecretName: normalizeOptional(input.getInput("access-token-secret-name")) ?? DEFAULT_ACCESS_TOKEN_SECRET_NAME,
@@ -21119,7 +21510,7 @@ async function writeGitHubSecrets(result, inputs, dependencies) {
   dependencies.core.info(`Wrote secrets: ${inputs.accessTokenSecretName}, ${inputs.teamIdSecretName}`);
 }
 function validateInputs(inputs) {
-  resolvePostmanApiHost(inputs.postmanStack);
+  resolvePostmanApiHost(inputs.postmanStack, inputs.postmanRegion);
   if (!inputs.postmanAccessToken && !inputs.postmanApiKey) {
     throw new Error("postman-api-key is required when postman-access-token is not provided.");
   }
@@ -21127,14 +21518,34 @@ function validateInputs(inputs) {
     throw new Error("github-token is required when write-github-secret is 'true'. The default GITHUB_TOKEN cannot write repo secrets; use a PAT or GitHub App installation token with secrets write permission.");
   }
 }
+function warn(core, message) {
+  if (core.warning) {
+    core.warning(message);
+    return;
+  }
+  core.info(message);
+}
 async function runResolveServiceToken(inputs, dependencies) {
+  const telemetry = createTelemetryContext({ action: "postman-resolve-service-token-action", logger: dependencies.core });
+  try {
+    const result = await runResolveServiceTokenInner(inputs, dependencies, telemetry);
+    telemetry.setAccountType("service_account");
+    telemetry.emitCompletion("success");
+    return result;
+  } catch (error2) {
+    telemetry.setAccountType("service_account");
+    telemetry.emitCompletion("failure");
+    throw error2;
+  }
+}
+async function runResolveServiceTokenInner(inputs, dependencies, telemetry) {
   validateInputs(inputs);
-  const apiHost = resolvePostmanApiHost(inputs.postmanStack);
+  const apiHost = resolvePostmanApiHost(inputs.postmanStack, inputs.postmanRegion);
   const skipped = Boolean(inputs.postmanAccessToken);
   const token = inputs.postmanAccessToken ?? await mintServiceToken(inputs, apiHost, dependencies.fetcher);
   dependencies.core.setSecret(token);
   if (skipped) {
-    dependencies.core.info("Skipped mint - using provided postman-access-token.");
+    warn(dependencies.core, "Using a provided postman-access-token. Prefer minting a fresh service-account token with postman-api-key unless this workflow intentionally manages token rotation outside this action.");
   }
   let teamId;
   if (inputs.postmanTeamId) {
@@ -21149,6 +21560,7 @@ async function runResolveServiceToken(inputs, dependencies) {
       dependencies.core.info(`resolve-service-token: minted access token for team ${teamId} (user ${userId} ${fullName})`);
     }
   }
+  telemetry.setTeamId(teamId);
   const result = { token, teamId, skipped };
   dependencies.core.setOutput("token", result.token);
   dependencies.core.setOutput("team-id", result.teamId);
