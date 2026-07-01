@@ -17,7 +17,7 @@ tests/                    # vitest unit tests
 
 ```bash
 npm ci && npm test && npm run typecheck && npm run build
-npm run check:dist   # build + git diff --exit-code (CI integrity)
+npm run verify:dist  # CI/hook gate: rebuild + git diff (dev runs build)
 ```
 
 ## Key Behaviors
@@ -30,4 +30,4 @@ npm run check:dist   # build + git diff --exit-code (CI integrity)
 ## Gotchas
 
 - `main.ts` holds the real token-exchange logic; `index.ts` is the GitHub Action shell and `cli.ts` the non-GitHub adapter. Wire any pre-output logic into both entries.
-- esbuild bundles `--target=node24`; `dist/` is part of release integrity and is verified by `check:dist`.
+- esbuild bundles `--target=node24`; `dist/` is part of release integrity and is verified by `verify:dist` (CI + pre-push hook).

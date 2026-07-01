@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
+import { resolveActionVersion } from './action-version.js';
 
 export type PostmanStack = 'prod' | 'beta';
 
@@ -303,7 +304,7 @@ function warn(core: CoreLike, message: string): void {
 }
 
 export async function runResolveServiceToken(inputs: ResolveInputs, dependencies: ResolveDependencies): Promise<ResolveResult> {
-  const telemetry = createTelemetryContext({ action: 'postman-resolve-service-token-action', logger: dependencies.core });
+  const telemetry = createTelemetryContext({ action: 'postman-resolve-service-token-action', actionVersion: resolveActionVersion(), logger: dependencies.core });
   try {
     const result = await runResolveServiceTokenInner(inputs, dependencies, telemetry);
     telemetry.setAccountType('service_account');
