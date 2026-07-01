@@ -21,12 +21,12 @@ jobs:
       - uses: actions/checkout@v5
 
       - id: postman_token
-        uses: postman-cs/postman-resolve-service-token-action@v1
+        uses: postman-cs/postman-resolve-service-token-action@v2
         with:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-region: us
 
-      - uses: postman-cs/postman-api-onboarding-action@v1
+      - uses: postman-cs/postman-api-onboarding-action@v2
         with:
           project-name: core-payments
           spec-url: https://raw.githubusercontent.com/postman-cs/postman-resolve-service-token-action/main/examples/core-payments-openapi.yaml
@@ -89,12 +89,12 @@ jobs:
       - uses: actions/checkout@v5
 
       - id: postman_token
-        uses: postman-cs/postman-resolve-service-token-action@v1
+        uses: postman-cs/postman-resolve-service-token-action@v2
         with:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-region: us
 
-      - uses: postman-cs/postman-api-onboarding-action@v1
+      - uses: postman-cs/postman-api-onboarding-action@v2
         with:
           project-name: core-payments
           spec-url: https://raw.githubusercontent.com/postman-cs/postman-resolve-service-token-action/main/examples/core-payments-openapi.yaml
@@ -120,7 +120,7 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
-      - uses: postman-cs/postman-resolve-service-token-action@v1
+      - uses: postman-cs/postman-resolve-service-token-action@v2
         with:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           write-github-secret: 'true'
@@ -135,7 +135,7 @@ Workflows that already store `POSTMAN_ACCESS_TOKEN` as a repo secret can adopt t
 
 ```yaml
 - id: postman_token
-  uses: postman-cs/postman-resolve-service-token-action@v1
+  uses: postman-cs/postman-resolve-service-token-action@v2
   with:
     postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
     postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}   # skip mint
