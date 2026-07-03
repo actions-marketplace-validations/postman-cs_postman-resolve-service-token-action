@@ -203,6 +203,24 @@ Secret persistence via `--write-github-secret true` is GitHub-repo specific and 
 
 This action is the producer side of the programmatic token flow for [`postman-cs/postman-api-onboarding-action`](https://github.com/postman-cs/postman-api-onboarding-action). It calls the Postman `/service-account-tokens` endpoint with the [service-account](https://learning.postman.com/docs/administration/service-accounts/) PMAK to mint a fresh access token, resolves the team ID via `/me`, and masks the token in logs.
 
+```mermaid
+sequenceDiagram
+    participant WF as workflow step
+    participant A as resolve-token
+    participant PM as Postman API
+    participant GH as GitHub secrets
+
+    WF->>A: postman-api-key (PMAK secret)
+    A->>PM: POST /service-account-tokens
+    PM-->>A: fresh access token
+    A->>PM: GET /me
+    PM-->>A: team ID
+    A-->>WF: outputs: token (masked) + team-id
+    opt write-github-secret true
+        A->>GH: persist token + team ID as repo secrets
+    end
+```
+
 Both lookups honor explicit overrides: a provided `postman-access-token` or `postman-team-id` is returned verbatim and the corresponding API call is skipped, so existing workflows that manage the token externally can adopt the action incrementally. Passing an existing access token emits a warning because service-account minting is the recommended path.
 
 With `write-github-secret: 'true'` the resolved values are also written back to repo secrets (names configurable via `access-token-secret-name` and `team-id-secret-name`), which lets a scheduled run keep secrets fresh for every other workflow in the repo.
@@ -229,9 +247,13 @@ Releases follow the stable `v1` channel: immutable `v1.x.y` tags for reproducibl
 
 This action sends a single non-identifying usage event when a run completes, so the
 Postman team can measure adoption across CI systems. The event contains the
-action name and version, your Postman team ID, the detected CI provider and
-runner kind, the run outcome, the CI run identifier, an event timestamp, and a one-way SHA-256 hash of the repository
-identifier. Each event also carries a schema version and a constant event marker (always `completion`). The Postman team ID is sent in the clear on a legitimate-interest
+action name and version, your Postman team ID, the run outcome, an event
+timestamp, the detected CI provider, runner kind, and runner OS, the CI run
+identifier and event trigger, a one-way SHA-256 hash of the repository
+identifier, the detected git provider (github, gitlab, bitbucket, or
+azure-devops), a one-way SHA-256 hash of the VCS organization name, a coarse
+account type (service or user), and a coarse ref kind (default-branch, branch,
+or tag). Each event also carries a schema version and a constant event marker (always `completion`). The Postman team ID is sent in the clear on a legitimate-interest
 basis to measure product adoption.
 
 The `events.pm-cse.dev` endpoint is operated by the Postman Customer Success
