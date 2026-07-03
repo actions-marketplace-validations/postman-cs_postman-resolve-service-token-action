@@ -31,3 +31,12 @@ npm run verify:dist  # CI/hook gate: rebuild + git diff (dev runs build)
 
 - `main.ts` holds the real token-exchange logic; `index.ts` is the GitHub Action shell and `cli.ts` the non-GitHub adapter. Wire any pre-output logic into both entries.
 - esbuild bundles `--target=node24`; `dist/` is part of release integrity and is verified by `verify:dist` (CI + pre-push hook).
+
+## CI
+
+`.github/workflows/ci.yml` runs a single `gate` job that fans out lint, test, typecheck, dist, commitlint, and actionlint
+as backgrounded shell processes on one runner: wall-clock is `max(gate)`, not
+`sum`, setup runs once, and every gate prints its result under a `::group::`
+block even when another fails.
+
+See the workspace `docs/CI.md` for the shared rationale.
