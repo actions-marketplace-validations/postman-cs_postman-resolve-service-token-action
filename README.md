@@ -4,7 +4,13 @@
 
 Recommended credential producer for the Postman API Onboarding suite. It mints a fresh service-account access token and team ID in CI, ready to hand to the onboarding action or store as repo secrets.
 
-Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman-api-onboarding-action).
+Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman-api-onboarding-action); the composite action's README has the full [action-picker table](https://github.com/postman-cs/postman-api-onboarding-action#which-action-should-i-use).
+
+- [Quick start](#quick-start)
+- [Authentication matrix](#authentication-matrix)
+- [Examples](#examples)
+- [Inputs](#inputs) / [Outputs](#outputs)
+- [How it works](#how-it-works)
 
 ## Quick start
 
@@ -37,18 +43,6 @@ jobs:
 ```
 
 The step emits `outputs.token` and `outputs.team-id` for downstream steps. `postman-api-key` must be a [Postman service account](https://learning.postman.com/docs/administration/service-accounts/) PMAK; the underlying `/service-account-tokens` endpoint rejects personal user keys.
-
-## Which action should I use?
-
-| Action | Use when | Consumes | Produces |
-| --- | --- | --- | --- |
-| [Postman Onboarding: Service Token](https://github.com/postman-cs/postman-resolve-service-token-action) | You need CI-safe Postman credentials for any onboarding workflow | Service-account PMAK | Access token, team ID |
-| [Postman API Onboarding](https://github.com/postman-cs/postman-api-onboarding-action) | You want the full onboarding pipeline in one composite action | API key, access token, team ID, OpenAPI spec | Workspace, API, repo artifacts, optional Insights link |
-| [Postman Onboarding: AWS Spec Discovery](https://github.com/postman-cs/postman-aws-spec-discovery-action) | Your OpenAPI spec should be discovered from AWS before onboarding | AWS credentials | Spec URL or spec path |
-| [Postman Onboarding: Workspace Bootstrap](https://github.com/postman-cs/postman-bootstrap-action) | You only need workspace creation, spec upload, and collection generation | API key, access token, team ID, OpenAPI spec | Workspace ID, API ID, collection IDs |
-| [Postman Onboarding: Smoke Flow](https://github.com/postman-cs/postman-smoke-flow-action) | You need to apply a curated flow.yaml to the generated Smoke collection | Bootstrap outputs, API key, flow.yaml | Refreshed Smoke collection |
-| [Postman Onboarding: Repo Sync](https://github.com/postman-cs/postman-repo-sync-action) | You only need generated artifacts committed back to the repo | Bootstrap outputs | `.postman/` resources, collections, CI templates |
-| [Postman Onboarding: Insights Linking](https://github.com/postman-cs/postman-insights-onboarding-action) | You only need to link an Insights service to a workspace | Workspace and service identifiers | Insights link state |
 
 ## Region and stack
 
@@ -229,59 +223,13 @@ Releases follow the stable `v1` channel: immutable `v1.x.y` tags for reproducibl
 
 ## Resources
 
-- [postman-api-onboarding-action](https://github.com/postman-cs/postman-api-onboarding-action): composite action that orchestrates the onboarding pipeline
-- [postman-bootstrap-action](https://github.com/postman-cs/postman-bootstrap-action): workspace, spec upload, collections, governance
-- [postman-smoke-flow-action](https://github.com/postman-cs/postman-smoke-flow-action): applies a curated flow.yaml to the Smoke collection
-- [postman-repo-sync-action](https://github.com/postman-cs/postman-repo-sync-action): artifact sync, environments, mocks, monitors
-- [postman-insights-onboarding-action](https://github.com/postman-cs/postman-insights-onboarding-action): Insights-to-workspace linking
-- [postman-aws-spec-discovery-action](https://github.com/postman-cs/postman-aws-spec-discovery-action): AWS API and spec discovery
-- [@postman-cse/onboarding-resolve-service-token on npm](https://www.npmjs.com/package/@postman-cse/onboarding-resolve-service-token)
-- [postman-service-account-onboarding-sample](https://github.com/postman-cs/postman-service-account-onboarding-sample): end-to-end sample workflows
-- Postman Learning Center: [service accounts](https://learning.postman.com/docs/administration/service-accounts/), [API authentication](https://learning.postman.com/docs/reference/postman-api/authentication/), [manage API keys](https://learning.postman.com/docs/administration/managing-your-team/managing-api-keys/), [Postman CLI auth](https://learning.postman.com/docs/postman-cli/postman-cli-auth/), [EU data residency](https://learning.postman.com/docs/administration/enterprise/about-eu-data-residency/)
-- [Support](SUPPORT.md): where to ask for help
-- [Security policy](SECURITY.md): how to report vulnerabilities
-- [Release policy](RELEASE_POLICY.md): versioning and tag rules
-
+- npm package: [@postman-cse/onboarding-resolve-service-token](https://www.npmjs.com/package/@postman-cse/onboarding-resolve-service-token); sample workflows: [postman-service-account-onboarding-sample](https://github.com/postman-cs/postman-service-account-onboarding-sample)
+- Marketplace docs: [Support](SUPPORT.md), [Security policy](SECURITY.md), [Release policy](RELEASE_POLICY.md)
+- Postman references: [service accounts](https://learning.postman.com/docs/administration/service-accounts/), [API authentication](https://learning.postman.com/docs/reference/postman-api/authentication/), [manage API keys](https://learning.postman.com/docs/administration/managing-your-team/managing-api-keys/), [Postman CLI auth](https://learning.postman.com/docs/postman-cli/postman-cli-auth/), [EU data residency](https://learning.postman.com/docs/administration/enterprise/about-eu-data-residency/)
 
 ## Telemetry
 
-This action sends a single non-identifying usage event when a run completes, so the
-Postman team can measure adoption across CI systems. The event contains the
-action name and version, your Postman team ID, the run outcome, an event
-timestamp, the detected CI provider, runner kind, and runner OS, the CI run
-identifier and event trigger, a one-way SHA-256 hash of the repository
-identifier, the detected git provider (github, gitlab, bitbucket, or
-azure-devops), a one-way SHA-256 hash of the VCS organization name, a coarse
-account type (service or user), and a coarse ref kind (default-branch, branch,
-or tag). Each event also carries a schema version and a constant event marker (always `completion`). The Postman team ID is sent in the clear on a legitimate-interest
-basis to measure product adoption.
-
-The `events.pm-cse.dev` endpoint is operated by the Postman Customer Success
-Engineering team. Postman, Inc. processes these events only to measure
-onboarding adoption in aggregate, retains them only as aggregated counts for
-product-adoption trend analysis, and includes no payload field that identifies
-an individual person.
-
-It never sends API keys, access tokens, spec content, workspace or repository
-names, or any personal data. It is fire-and-forget with a hard
-timeout and can never block or fail your pipeline. Corporate HTTP and HTTPS
-proxies are honored through the standard `HTTPS_PROXY`, `HTTP_PROXY`, and
-`NO_PROXY` environment variables.
-
-Disable it by setting either environment variable in your CI:
-
-```sh
-POSTMAN_ACTIONS_TELEMETRY=off
-# or the cross-tool standard
-DO_NOT_TRACK=1
-```
-
-Telemetry is also skipped automatically when no Postman team ID can be resolved.
-
-Events are sent over HTTPS to `https://events.pm-cse.dev/v1/events`. To
-allowlist this destination on a restricted network, or to route events to a
-collector you operate, set the `POSTMAN_ACTIONS_TELEMETRY_ENDPOINT` environment
-variable to your own URL.
+The action sends one anonymous usage event per run (action name/version, outcome, coarse CI metadata; never secrets, spec content, or repo names). Disable with `POSTMAN_ACTIONS_TELEMETRY=off` or `DO_NOT_TRACK=1`; route events to your own collector with `POSTMAN_ACTIONS_TELEMETRY_ENDPOINT`.
 
 ## License
 
