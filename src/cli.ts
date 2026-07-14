@@ -4,6 +4,7 @@ import {
   runResolveServiceToken,
   type CoreLike
 } from './index.js';
+import { resolveActionVersion } from './action-version.js';
 
 const cliInputNames = [
   'postman-api-key',
@@ -40,6 +41,33 @@ function applyArgsToEnv(argv: string[], env: NodeJS.ProcessEnv): void {
   }
 }
 
+function wantsHelp(argv: string[]): boolean {
+  return argv.includes('--help') || argv.includes('-h');
+}
+
+function wantsVersion(argv: string[]): boolean {
+  return argv.includes('--version') || argv.includes('-V');
+}
+
+function printHelp(): void {
+  const inputFlags = cliInputNames.map((name) => `  --${name} <value>`).join('\n');
+  process.stdout.write(`Usage: postman-resolve-service-token [options]
+
+Mint a Postman service-account access token and resolve the team ID.
+
+Options mirror action.yml inputs as --kebab-case flags:
+${inputFlags}
+
+Other:
+  --help       Show this help text and exit
+  --version    Print the package version and exit
+`);
+}
+
+function printVersion(): void {
+  process.stdout.write(`${resolveActionVersion()}\n`);
+}
+
 const outputs: Record<string, string> = {};
 
 const cliCore: CoreLike = {
@@ -53,9 +81,18 @@ const cliCore: CoreLike = {
   }
 };
 
-async function main(): Promise<void> {
+async function main(argv: string[] = process.argv): Promise<void> {
+  if (wantsHelp(argv)) {
+    printHelp();
+    return;
+  }
+  if (wantsVersion(argv)) {
+    printVersion();
+    return;
+  }
+
   const env = { ...process.env };
-  applyArgsToEnv(process.argv, env);
+  applyArgsToEnv(argv, env);
   await runResolveServiceToken(readInputsFromEnv(env), {
     core: cliCore,
     fetcher: fetch,
@@ -65,8 +102,16 @@ async function main(): Promise<void> {
   process.stdout.write(`${JSON.stringify(outputs, null, 2)}\n`);
 }
 
-main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`error: ${message}`);
-  process.exitCode = 1;
-});
+function shouldRunMain(): boolean {
+  const cjsModule = typeof module !== 'undefined' ? module : undefined;
+  const cjsRequire = typeof require !== 'undefined' ? require : undefined;
+  return Boolean(cjsModule && cjsRequire && cjsRequire.main === cjsModule);
+}
+
+if (shouldRunMain()) {
+  main().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`error: ${message}`);
+    process.exitCode = 1;
+  });
+}
