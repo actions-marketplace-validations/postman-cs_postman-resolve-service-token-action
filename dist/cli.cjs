@@ -19155,6 +19155,30 @@ function applyArgsToEnv(argv, env) {
     }
   }
 }
+function wantsHelp(argv) {
+  return argv.includes("--help") || argv.includes("-h");
+}
+function wantsVersion(argv) {
+  return argv.includes("--version") || argv.includes("-V");
+}
+function printHelp() {
+  const inputFlags = cliInputNames.map((name) => `  --${name} <value>`).join("\n");
+  process.stdout.write(`Usage: postman-resolve-service-token [options]
+
+Mint a Postman service-account access token and resolve the team ID.
+
+Options mirror action.yml inputs as --kebab-case flags:
+${inputFlags}
+
+Other:
+  --help       Show this help text and exit
+  --version    Print the package version and exit
+`);
+}
+function printVersion() {
+  process.stdout.write(`${resolveActionVersion2()}
+`);
+}
 var outputs = {};
 var cliCore = {
   info(message) {
@@ -19166,9 +19190,17 @@ var cliCore = {
   setSecret() {
   }
 };
-async function main() {
+async function main(argv = process.argv) {
+  if (wantsHelp(argv)) {
+    printHelp();
+    return;
+  }
+  if (wantsVersion(argv)) {
+    printVersion();
+    return;
+  }
   const env = { ...process.env };
-  applyArgsToEnv(process.argv, env);
+  applyArgsToEnv(argv, env);
   await runResolveServiceToken(readInputsFromEnv(env), {
     core: cliCore,
     fetcher: fetch,
@@ -19178,11 +19210,18 @@ async function main() {
   process.stdout.write(`${JSON.stringify(outputs, null, 2)}
 `);
 }
-main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`error: ${message}`);
-  process.exitCode = 1;
-});
+function shouldRunMain() {
+  const cjsModule = typeof module !== "undefined" ? module : void 0;
+  const cjsRequire = typeof require !== "undefined" ? require : void 0;
+  return Boolean(cjsModule && cjsRequire && cjsRequire.main === cjsModule);
+}
+if (shouldRunMain()) {
+  main().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`error: ${message}`);
+    process.exitCode = 1;
+  });
+}
 /*! Bundled license information:
 
 undici/lib/web/fetch/body.js:
