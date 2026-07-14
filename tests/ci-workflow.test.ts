@@ -6,10 +6,14 @@ import { describe, expect, it } from 'vitest';
 const ciWorkflow = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
 
 describe('CI dist build contract', () => {
-  it('builds once before fan-out and runs only the read-only dist assertion in parallel', () => {
-    expect(ciWorkflow.match(/npm run build/g)).toHaveLength(1);
-    expect(ciWorkflow.indexOf('- run: npm run build')).toBeLessThan(ciWorkflow.indexOf('- name: Run gates'));
+  it('bundles once, typechecks once, caps fan-out, and keeps dist read-only', () => {
+    expect(ciWorkflow.match(/npm run bundle/g)).toHaveLength(1);
+    expect(ciWorkflow).not.toContain('- run: npm run build');
+    expect(ciWorkflow.match(/npm run typecheck/g)).toHaveLength(1);
+    expect(ciWorkflow.indexOf('- run: npm run bundle')).toBeLessThan(ciWorkflow.indexOf('- name: Run gates'));
     expect(ciWorkflow).toContain('run dist       npm run verify:dist:assert');
     expect(ciWorkflow).not.toMatch(/run dist\s+npm run verify:dist(?:\s|$)/);
+    expect(ciWorkflow).toContain('MAX_PARALLEL_GATES=2');
+    expect(ciWorkflow).toContain('wait -n -p finished_pid');
   });
 });

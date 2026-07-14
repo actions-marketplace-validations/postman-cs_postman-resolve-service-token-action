@@ -36,12 +36,9 @@ npm run verify:dist:assert  # read-only dist contract (CI after one build)
 
 ## CI
 
-`.github/workflows/ci.yml` runs single `gate` job. Setup installs deps/tools,
-then `npm run build` runs once before fan-out so `dist/` is present for pack
-tests. Job then fans out lint, test, typecheck, read-only
-`verify:dist:assert`, commitlint, and actionlint as backgrounded shell
-processes on one runner: wall-clock is `max(gate)`, not `sum`, and every gate
-prints its result under a `::group::` block even when another fails. Building
-before fan-out prevents pack tests from racing parallel `rm -rf dist`.
+`.github/workflows/ci.yml` runs one `gate` job. It bundles once, then queues at
+most two checks on one runner. Typecheck runs once. Dist uses read-only
+`verify:dist:assert`; no pack race. Every check prints a `::group::` result even
+when another check fails.
 
 See workspace-root `../../docs/CI.md` for shared rationale.
