@@ -181,11 +181,17 @@ describe('CLI packaging contract', () => {
 
   it('does not rebuild dist from packaging tests', async () => {
     const packageJson = await readFile(path.join(repoRoot, 'package.json'), 'utf8');
+    const scripts = (JSON.parse(packageJson) as { scripts: Record<string, string> }).scripts;
     const packagingSource = await readFile(path.join(repoRoot, 'tests', 'cli-packaging.test.ts'), 'utf8');
     // Build the banned rebuild token without embedding the contiguous literal in this file,
     // otherwise the self-scan would match the expectation source itself.
     const bannedRebuild = ['rm', '-rf', 'dist'].join(' ');
-    expect(packageJson).toMatch(/"verify:dist:assert"/);
+    expect(scripts['verify:dist:assert']).toBe(
+      'git diff --ignore-space-at-eol --text --exit-code -- dist && node scripts/verify-dist-artifact.mjs'
+    );
+    expect(scripts['verify:dist']).toBe(
+      ['npm run', 'build', '&& npm run verify:dist:assert'].join(' ')
+    );
     expect(packageJson).toMatch(/"bundle"/);
     expect(packagingSource).not.toMatch(/\bnpm run (?:build|bundle)\b/);
     expect(packagingSource).not.toMatch(/\besbuild\b/);
