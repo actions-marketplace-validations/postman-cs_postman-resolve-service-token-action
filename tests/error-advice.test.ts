@@ -3,6 +3,14 @@ import { beforeEach, describe, expect, test } from 'vitest';
 import { runResolveServiceToken, type ResolveDependencies } from '../src/index.js';
 import { resolveTokenIdentity, __resetIdentityMemo } from '../src/credential-identity.js';
 
+function expectNoTerminalControls(text: string): void {
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    const isControl = code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f);
+    expect(isControl, `unexpected control U+${code.toString(16)} at ${i}`).toBe(false);
+  }
+}
+
 function createCore() {
   const outputs: Record<string, string> = {};
   const secrets: string[] = [];
@@ -33,6 +41,7 @@ beforeEach(() => {
 describe('mint failure error messages', () => {
   test('mint failure on 403 yields actionable PMAK message', async () => {
     const harness = createCore();
+    const pmak = 'pmak-403-SECRET';
     const dependencies: ResolveDependencies = {
       core: harness.core,
       fetcher: async (url) => {
@@ -44,19 +53,30 @@ describe('mint failure error messages', () => {
       execFile: async () => ({ stdout: '', stderr: '' })
     };
 
-    await expect(
-      runResolveServiceToken({
-        postmanApiKey: 'pmak-test-fake',
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: pmak,
         postmanStack: 'prod',
         writeGithubSecret: false,
         accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
         teamIdSecretName: 'POSTMAN_TEAM_ID'
-      }, dependencies)
-    ).rejects.toThrow(/The postman-api-key was rejected \(HTTP 403\)/);
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('POST https://api.getpostman.com/service-account-tokens');
+    expect(errorMessage).toContain('mint service-account token');
+    expect(errorMessage).toContain('The postman-api-key was rejected (HTTP 403)');
+    expect(errorMessage).toMatch(/confirm it is a valid, enabled PMAK/);
+    expect(errorMessage).not.toContain('\n');
+    expect(errorMessage).not.toContain(pmak);
   });
 
   test('mint failure on 401 yields actionable PMAK message', async () => {
     const harness = createCore();
+    const pmak = 'pmak-401-SECRET';
     const dependencies: ResolveDependencies = {
       core: harness.core,
       fetcher: async (url) => {
@@ -68,19 +88,30 @@ describe('mint failure error messages', () => {
       execFile: async () => ({ stdout: '', stderr: '' })
     };
 
-    await expect(
-      runResolveServiceToken({
-        postmanApiKey: 'pmak-test-fake',
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: pmak,
         postmanStack: 'prod',
         writeGithubSecret: false,
         accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
         teamIdSecretName: 'POSTMAN_TEAM_ID'
-      }, dependencies)
-    ).rejects.toThrow(/The postman-api-key was rejected \(HTTP 401\)/);
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('POST https://api.getpostman.com/service-account-tokens');
+    expect(errorMessage).toContain('mint service-account token');
+    expect(errorMessage).toContain('The postman-api-key was rejected (HTTP 401)');
+    expect(errorMessage).toMatch(/confirm it is a valid, enabled PMAK/);
+    expect(errorMessage).not.toContain('\n');
+    expect(errorMessage).not.toContain(pmak);
   });
 
   test('mint failure on 400 service-accounts-disabled yields enablement message', async () => {
     const harness = createCore();
+    const pmak = 'pmak-DISABLED-SECRET';
     const dependencies: ResolveDependencies = {
       core: harness.core,
       fetcher: async (url) => {
@@ -92,45 +123,411 @@ describe('mint failure error messages', () => {
       execFile: async () => ({ stdout: '', stderr: '' })
     };
 
-    await expect(
-      runResolveServiceToken({
-        postmanApiKey: 'pmak-test-fake',
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: pmak,
         postmanStack: 'prod',
         writeGithubSecret: false,
         accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
         teamIdSecretName: 'POSTMAN_TEAM_ID'
-      }, dependencies)
-    ).rejects.toThrow(/Service accounts are not enabled for this team/);
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('POST https://api.getpostman.com/service-account-tokens');
+    expect(errorMessage).toContain('mint service-account token');
+    expect(errorMessage).toContain('Service accounts are not enabled for this team');
+    expect(errorMessage).toContain('targeted by postman-api-key');
+    expect(errorMessage).toContain('Team Settings');
+    expect(errorMessage).not.toContain('\n');
+    expect(errorMessage).not.toContain(pmak);
   });
 
   test('mint failure on 400 without service-accounts keyword keeps generic error', async () => {
     const harness = createCore();
+    const pmak = 'pmak-SECRET-SENTINEL-VALUE';
+    const uniqueTail = 'UNIQUE-TAIL-SHOULD-NOT-APPEAR-IN-BOUNDED-DETAIL';
+    const ansiPrefix = '\u001b[31mALERT\u001b[0m\u0007\u009b';
+    const overLimitBody = `{"error":"${ansiPrefix} leak ${pmak} ${'x'.repeat(220)} ${uniqueTail}"}`;
     const dependencies: ResolveDependencies = {
       core: harness.core,
       fetcher: async (url) => {
         if (String(url).endsWith('/service-account-tokens')) {
-          return new Response('{"error":"bad request"}', { status: 400 });
+          return new Response(`${overLimitBody}\nextra\nlines`, { status: 400 });
         }
         throw new Error('unexpected fetch');
       },
       execFile: async () => ({ stdout: '', stderr: '' })
     };
 
-    await expect(
-      runResolveServiceToken({
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: pmak,
+        postmanStack: 'prod',
+        writeGithubSecret: false,
+        accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
+        teamIdSecretName: 'POSTMAN_TEAM_ID'
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('POST https://api.getpostman.com/service-account-tokens');
+    expect(errorMessage).toContain('mint service-account token');
+    expect(errorMessage).toContain('HTTP 400');
+    expect(errorMessage).toContain('ALERT');
+    expect(errorMessage).toMatch(/Verify the postman-api-key|retry|contact Postman support/);
+    expect(errorMessage).toContain('...');
+    expect(errorMessage).not.toContain(uniqueTail);
+    expectNoTerminalControls(errorMessage);
+    expect(errorMessage).not.toContain(pmak);
+    expect(errorMessage).toContain('[REDACTED]');
+  });
+
+  test('mint response-body read failure names endpoint, cause, and remediation', async () => {
+    const harness = createCore();
+    const pmak = 'pmak-BODY-READ-SECRET';
+    const dependencies: ResolveDependencies = {
+      core: harness.core,
+      fetcher: async (url) => {
+        if (String(url).endsWith('/service-account-tokens')) {
+          return {
+            ok: true,
+            status: 201,
+            async text() {
+              throw new Error(`stream destroyed with ${pmak}`);
+            }
+          } as unknown as Response;
+        }
+        throw new Error('unexpected fetch');
+      },
+      execFile: async () => ({ stdout: '', stderr: '' })
+    };
+
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: pmak,
+        postmanStack: 'prod',
+        writeGithubSecret: false,
+        accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
+        teamIdSecretName: 'POSTMAN_TEAM_ID'
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('POST https://api.getpostman.com/service-account-tokens');
+    expect(errorMessage).toContain('mint service-account token');
+    expect(errorMessage).toContain('failed to read response body');
+    expect(errorMessage).toContain('stream destroyed');
+    expect(errorMessage).toMatch(/Verify the postman-api-key|retry|contact Postman support/);
+    expect(errorMessage).not.toContain('no access token');
+    expect(errorMessage).not.toContain('\n');
+    expect(errorMessage).not.toContain(pmak);
+  });
+
+  test('mint transport failure names endpoint and remediation', async () => {
+    const harness = createCore();
+    const pmak = 'pmak-TRANSPORT-SECRET';
+    const dependencies: ResolveDependencies = {
+      core: harness.core,
+      fetcher: async () => {
+        throw new Error(`connect ECONNREFUSED with ${pmak}`);
+      },
+      execFile: async () => ({ stdout: '', stderr: '' })
+    };
+
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: pmak,
+        postmanStack: 'prod',
+        writeGithubSecret: false,
+        accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
+        teamIdSecretName: 'POSTMAN_TEAM_ID'
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('POST https://api.getpostman.com/service-account-tokens');
+    expect(errorMessage).toContain('mint service-account token');
+    expect(errorMessage).toContain('ECONNREFUSED');
+    expect(errorMessage).toMatch(/Verify the postman-api-key|retry|contact Postman support/);
+    expect(errorMessage).not.toContain('\n');
+    expect(errorMessage).not.toContain(pmak);
+  });
+
+  test('mint malformed JSON names endpoint and remediation', async () => {
+    const harness = createCore();
+    const dependencies: ResolveDependencies = {
+      core: harness.core,
+      fetcher: async (url) => {
+        if (String(url).endsWith('/service-account-tokens')) {
+          return new Response('not-json{', { status: 201 });
+        }
+        throw new Error('unexpected fetch');
+      },
+      execFile: async () => ({ stdout: '', stderr: '' })
+    };
+
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
         postmanApiKey: 'pmak-test-fake',
         postmanStack: 'prod',
         writeGithubSecret: false,
         accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
         teamIdSecretName: 'POSTMAN_TEAM_ID'
-      }, dependencies)
-    ).rejects.toThrow(/service-account-tokens failed \(HTTP 400\)/);
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('POST https://api.getpostman.com/service-account-tokens');
+    expect(errorMessage).toContain('malformed JSON');
+    expect(errorMessage).toMatch(/Verify the postman-api-key|retry|contact Postman support/);
+    expect(errorMessage).not.toContain('\n');
+  });
+
+  test('mint success without token names endpoint and remediation', async () => {
+    const harness = createCore();
+    const dependencies: ResolveDependencies = {
+      core: harness.core,
+      fetcher: async (url) => {
+        if (String(url).endsWith('/service-account-tokens')) {
+          return new Response(JSON.stringify({ ok: true }), { status: 201 });
+        }
+        throw new Error('unexpected fetch');
+      },
+      execFile: async () => ({ stdout: '', stderr: '' })
+    };
+
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: 'pmak-test-fake',
+        postmanStack: 'prod',
+        writeGithubSecret: false,
+        accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
+        teamIdSecretName: 'POSTMAN_TEAM_ID'
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('POST https://api.getpostman.com/service-account-tokens');
+    expect(errorMessage).toContain('no access token');
+    expect(errorMessage).toMatch(/Verify the postman-api-key|retry|contact Postman support/);
+    expect(errorMessage).not.toContain('\n');
+  });
+});
+
+describe('/me failure error messages', () => {
+  test('/me HTTP failure names endpoint, status, and remediation', async () => {
+    const harness = createCore();
+    const token = 'minted-token-SECRET-VALUE';
+    const dependencies: ResolveDependencies = {
+      core: harness.core,
+      fetcher: async (url) => {
+        if (String(url).endsWith('/service-account-tokens')) {
+          return new Response(JSON.stringify({ session: { token } }), { status: 201 });
+        }
+        if (String(url).endsWith('/me')) {
+          return new Response(`{"error":"boom with ${token}"}\nline2`, { status: 500 });
+        }
+        throw new Error('unexpected fetch');
+      },
+      execFile: async () => ({ stdout: '', stderr: '' })
+    };
+
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: 'pmak-test-fake',
+        postmanStack: 'prod',
+        writeGithubSecret: false,
+        accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
+        teamIdSecretName: 'POSTMAN_TEAM_ID'
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('GET https://api.getpostman.com/me');
+    expect(errorMessage).toContain('resolve team identity');
+    expect(errorMessage).toContain('HTTP 500');
+    expect(errorMessage).toMatch(/Verify the access token|postman-team-id/);
+    expect(errorMessage).not.toContain('\n');
+    expect(errorMessage).not.toContain(token);
+    expect(errorMessage).toContain('[REDACTED]');
+  });
+
+  test('/me transport failure names endpoint, cause, and remediation', async () => {
+    const harness = createCore();
+    const token = 'minted-token-TRANSPORT-SECRET';
+    const dependencies: ResolveDependencies = {
+      core: harness.core,
+      fetcher: async (url) => {
+        if (String(url).endsWith('/service-account-tokens')) {
+          return new Response(JSON.stringify({ session: { token } }), { status: 201 });
+        }
+        if (String(url).endsWith('/me')) {
+          throw new Error(`getaddrinfo ENOTFOUND with ${token}`);
+        }
+        throw new Error('unexpected fetch');
+      },
+      execFile: async () => ({ stdout: '', stderr: '' })
+    };
+
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: 'pmak-test-fake',
+        postmanStack: 'prod',
+        writeGithubSecret: false,
+        accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
+        teamIdSecretName: 'POSTMAN_TEAM_ID'
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('GET https://api.getpostman.com/me');
+    expect(errorMessage).toContain('resolve team identity');
+    expect(errorMessage).toContain('ENOTFOUND');
+    expect(errorMessage).toMatch(/Verify the access token|postman-team-id/);
+    expect(errorMessage).not.toContain('\n');
+    expect(errorMessage).not.toContain(token);
+  });
+
+  test('/me malformed JSON names endpoint and remediation', async () => {
+    const harness = createCore();
+    const dependencies: ResolveDependencies = {
+      core: harness.core,
+      fetcher: async (url) => {
+        if (String(url).endsWith('/service-account-tokens')) {
+          return new Response(JSON.stringify({ session: { token: 'minted-token-fake' } }), { status: 201 });
+        }
+        if (String(url).endsWith('/me')) {
+          return new Response('not-json{', { status: 200 });
+        }
+        throw new Error('unexpected fetch');
+      },
+      execFile: async () => ({ stdout: '', stderr: '' })
+    };
+
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: 'pmak-test-fake',
+        postmanStack: 'prod',
+        writeGithubSecret: false,
+        accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
+        teamIdSecretName: 'POSTMAN_TEAM_ID'
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('GET https://api.getpostman.com/me');
+    expect(errorMessage).toContain('malformed JSON');
+    expect(errorMessage).toMatch(/Verify the access token|postman-team-id/);
+    expect(errorMessage).not.toContain('\n');
+  });
+
+  test('/me response-body read failure names endpoint, cause, and remediation', async () => {
+    const harness = createCore();
+    const token = 'minted-token-ME-BODY-SECRET';
+    const dependencies: ResolveDependencies = {
+      core: harness.core,
+      fetcher: async (url) => {
+        if (String(url).endsWith('/service-account-tokens')) {
+          return new Response(JSON.stringify({ session: { token } }), { status: 201 });
+        }
+        if (String(url).endsWith('/me')) {
+          return {
+            ok: true,
+            status: 200,
+            async text() {
+              throw new Error(`me body unread with ${token}`);
+            }
+          } as unknown as Response;
+        }
+        throw new Error('unexpected fetch');
+      },
+      execFile: async () => ({ stdout: '', stderr: '' })
+    };
+
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: 'pmak-test-fake',
+        postmanStack: 'prod',
+        writeGithubSecret: false,
+        accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
+        teamIdSecretName: 'POSTMAN_TEAM_ID'
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('GET https://api.getpostman.com/me');
+    expect(errorMessage).toContain('resolve team identity');
+    expect(errorMessage).toContain('failed to read response body');
+    expect(errorMessage).toContain('me body unread');
+    expect(errorMessage).toMatch(/Verify the access token|postman-team-id/);
+    expect(errorMessage).not.toContain('did not include a team id');
+    expect(errorMessage).not.toContain('\n');
+    expect(errorMessage).not.toContain(token);
+  });
+
+  test('/me missing team id names endpoint and remediation', async () => {
+    const harness = createCore();
+    const dependencies: ResolveDependencies = {
+      core: harness.core,
+      fetcher: async (url) => {
+        if (String(url).endsWith('/service-account-tokens')) {
+          return new Response(JSON.stringify({ session: { token: 'minted-token-fake' } }), { status: 201 });
+        }
+        if (String(url).endsWith('/me')) {
+          return new Response(JSON.stringify({ user: { id: 'user-1' } }), { status: 200 });
+        }
+        throw new Error('unexpected fetch');
+      },
+      execFile: async () => ({ stdout: '', stderr: '' })
+    };
+
+    let errorMessage = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: 'pmak-test-fake',
+        postmanStack: 'prod',
+        writeGithubSecret: false,
+        accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
+        teamIdSecretName: 'POSTMAN_TEAM_ID'
+      }, dependencies);
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(errorMessage).toContain('GET https://api.getpostman.com/me');
+    expect(errorMessage).toContain('did not include a team id');
+    expect(errorMessage).toMatch(/Verify the access token|postman-team-id/);
+    expect(errorMessage).not.toContain('\n');
   });
 });
 
 describe('identity echo after successful mint', () => {
   test('mint echoes resolved identity (team id, user) after minting', async () => {
     const harness = createCore();
+    const rawTeamId = 'team-789\r\nextra\u001b[32m';
+    const rawUserId = 'user-42\nline\u0007';
+    const rawFullName = 'Test\rUser\u009b';
     const dependencies: ResolveDependencies = {
       core: harness.core,
       fetcher: async (url) => {
@@ -140,9 +537,9 @@ describe('identity echo after successful mint', () => {
         if (String(url).endsWith('/me')) {
           return new Response(JSON.stringify({
             user: {
-              teamId: 'team-789',
-              id: 'user-42',
-              fullName: 'Test User'
+              teamId: rawTeamId,
+              id: rawUserId,
+              fullName: rawFullName
             }
           }), { status: 200 });
         }
@@ -151,7 +548,7 @@ describe('identity echo after successful mint', () => {
       execFile: async () => ({ stdout: '', stderr: '' })
     };
 
-    await runResolveServiceToken({
+    const result = await runResolveServiceToken({
       postmanApiKey: 'pmak-test-fake',
       postmanStack: 'prod',
       writeGithubSecret: false,
@@ -159,10 +556,15 @@ describe('identity echo after successful mint', () => {
       teamIdSecretName: 'POSTMAN_TEAM_ID'
     }, dependencies);
 
+    expect(result.teamId).toBe(rawTeamId);
+    expect(harness.outputs['team-id']).toBe(rawTeamId);
+
     const echoLine = harness.infos.find((line) => line.startsWith('resolve-service-token:'));
     expect(echoLine).toBeDefined();
-    expect(echoLine).toContain('team-789');
-    expect(echoLine).toContain('user-42');
+    expect(echoLine).toContain('team-789 extra');
+    expect(echoLine).toContain('user-42 line');
+    expect(echoLine).toContain('Test User');
+    expectNoTerminalControls(echoLine!);
   });
 
   test('echo line carries no token (masking-safe by construction)', async () => {
