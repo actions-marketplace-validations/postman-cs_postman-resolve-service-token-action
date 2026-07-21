@@ -81,6 +81,41 @@ describe('CLI packaging contract', () => {
     expect(written).toEqual([]);
   }, 20_000);
 
+  it('prefers CLI credential flags over action and plain environment values', async () => {
+    const cliPath = path.join(repoRoot, 'dist', 'cli.cjs');
+    const sandbox = await makeTempDir('postman-resolve-service-token-precedence-');
+    const result = await execFileAsync(
+      process.execPath,
+      [
+        cliPath,
+        '--postman-access-token',
+        'flag-access-token',
+        '--postman-team-id',
+        'flag-team-id'
+      ],
+      {
+        cwd: sandbox,
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH ?? '',
+          HOME: sandbox,
+          TMPDIR: sandbox,
+          INPUT_POSTMAN_ACCESS_TOKEN: 'input-access-token',
+          INPUT_POSTMAN_TEAM_ID: 'input-team-id',
+          POSTMAN_ACCESS_TOKEN: 'plain-access-token',
+          POSTMAN_ACTIONS_TELEMETRY: 'off'
+        },
+        maxBuffer: 1024 * 1024
+      }
+    );
+
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      token: 'flag-access-token',
+      'team-id': 'flag-team-id',
+      skipped: 'true'
+    });
+  });
+
   it('packs, installs, and runs postman-resolve-service-token --help/--version without side effects', async () => {
     const packDir = await makeTempDir('postman-resolve-service-token-pack-');
     const prefixDir = await makeTempDir('postman-resolve-service-token-prefix-');

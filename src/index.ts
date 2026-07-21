@@ -85,10 +85,19 @@ export function resolvePostmanApiHost(stackInput: string | undefined, regionInpu
   throw new Error(`postman-stack must be one of: prod, beta; got: ${stack}`);
 }
 
-export function readInputsFromAction(input: ActionInputReader): ResolveInputs {
+export function readInputsFromAction(
+  input: ActionInputReader,
+  env: NodeJS.ProcessEnv = process.env
+): ResolveInputs {
+  // Inputs win; fall back to plain POSTMAN_* env vars so Jenkins withCredentials
+  // (which binds a secret to a bare env var, no INPUT_ prefix) works flag-free.
   return {
-    postmanApiKey: normalizeOptional(input.getInput('postman-api-key')),
-    postmanAccessToken: normalizeOptional(input.getInput('postman-access-token')),
+    postmanApiKey:
+      normalizeOptional(input.getInput('postman-api-key')) ??
+      normalizeOptional(env.POSTMAN_API_KEY),
+    postmanAccessToken:
+      normalizeOptional(input.getInput('postman-access-token')) ??
+      normalizeOptional(env.POSTMAN_ACCESS_TOKEN),
     postmanTeamId: normalizeOptional(input.getInput('postman-team-id')),
     postmanRegion: normalizeOptional(input.getInput('postman-region')) ?? 'us',
     postmanStack: normalizeOptional(input.getInput('postman-stack')) ?? 'prod',
@@ -101,7 +110,7 @@ export function readInputsFromAction(input: ActionInputReader): ResolveInputs {
 
 export function readInputsFromEnv(env: NodeJS.ProcessEnv = process.env): ResolveInputs {
   const getInput = (name: string): string => env[`INPUT_${name.replace(/-/g, '_').toUpperCase()}`] ?? '';
-  return readInputsFromAction({ getInput });
+  return readInputsFromAction({ getInput }, env);
 }
 
 function createHeaders(entries: Record<string, string | undefined>): Record<string, string> {

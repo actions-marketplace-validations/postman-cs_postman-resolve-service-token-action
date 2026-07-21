@@ -193,6 +193,26 @@ Secret persistence via `--write-github-secret true` is GitHub-repo specific and 
 | `skipped` | 'true' when minting was skipped because postman-access-token was provided as input. |
 <!-- outputs-table:end -->
 
+## Self-contained binary (no npm / no Node)
+
+For CI that cannot install npm or Node — locked-down Jenkins, bare Bitbucket agents, boxes with no package-registry access — a single self-contained executable is published as a GitHub Release asset. It bakes the Node runtime and the full bundle into one file, so the target needs no npm, no Node install, and no package-registry access. It is not network-isolated: the run still needs outbound access to the Postman API host.
+
+```bash
+VERSION=2.0.3   # example: use a release that carries the binary
+ASSET="postman-resolve-service-token-${VERSION}-linux-x64"
+BASE_URL="https://github.com/postman-cs/postman-resolve-service-token-action/releases/download/v${VERSION}"
+curl -fsSLO "${BASE_URL}/${ASSET}"
+curl -fsSLO "${BASE_URL}/${ASSET}.sha256"
+shasum -a 256 -c "${ASSET}.sha256"
+chmod +x "$ASSET"
+mv "$ASSET" postman-resolve-service-token
+
+# Mint a token from a service-account PMAK; prints the outputs as JSON.
+POSTMAN_API_KEY="$PMAK" ./postman-resolve-service-token --postman-region us
+```
+
+Credentials resolve from a CLI flag, then the `INPUT_*` env var, then a plain `POSTMAN_API_KEY` / `POSTMAN_ACCESS_TOKEN` — so Jenkins `withCredentials` works with no flag. Proxy-only agents must set `NODE_USE_ENV_PROXY=1` alongside `HTTP_PROXY` / `HTTPS_PROXY`. This action is the token *minter*: its business calls use the selected Postman API host for `POST /service-account-tokens` and `GET /me`, while best-effort completion telemetry uses `events.pm-cse.dev`. It makes no runtime tool downloads. The `--write-github-secret` path is GitHub-repo specific and additionally needs the `gh` CLI on the agent (the binary bundles Node, not `gh`). Current target is `linux-x64`. Full runbook, credential minting, the complete host allowlist, and a Jenkins pipeline: [Self-contained binary](docs/self-contained-binary.md).
+
 ## How it works
 
 This action is the producer side of the programmatic token flow for [`postman-cs/postman-api-onboarding-action`](https://github.com/postman-cs/postman-api-onboarding-action). It calls the Postman `/service-account-tokens` endpoint with the [service-account](https://learning.postman.com/docs/administration/service-accounts/) PMAK to mint a fresh access token, resolves the team ID via `/me`, and masks the token in logs.
@@ -226,6 +246,7 @@ Releases follow the stable `v1` channel: immutable `v1.x.y` tags for reproducibl
 - npm package: [@postman-cse/onboarding-resolve-service-token](https://www.npmjs.com/package/@postman-cse/onboarding-resolve-service-token); sample workflows: [postman-service-account-onboarding-sample](https://github.com/postman-cs/postman-service-account-onboarding-sample)
 - Marketplace docs: [Support](SUPPORT.md), [Security policy](SECURITY.md), [Release policy](RELEASE_POLICY.md)
 - Postman references: [service accounts](https://learning.postman.com/docs/administration/service-accounts/), [API authentication](https://learning.postman.com/docs/reference/postman-api/authentication/), [manage API keys](https://learning.postman.com/docs/administration/managing-your-team/managing-api-keys/), [Postman CLI auth](https://learning.postman.com/docs/postman-cli/postman-cli-auth/), [EU data residency](https://learning.postman.com/docs/administration/enterprise/about-eu-data-residency/)
+- [Self-contained binary](docs/self-contained-binary.md): the no-npm/no-Node release binary for locked-down agents — install, credential minting, host allowlist, and a Jenkins pipeline.
 
 ## Telemetry
 
