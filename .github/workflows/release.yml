@@ -83,6 +83,7 @@ jobs:
       - name: Verify release tag classification
         id: release_tag
         env:
+          GITHUB_REF: ${{ needs.cut.outputs.tag && format('refs/tags/{0}', needs.cut.outputs.tag) || github.ref }}
           GITHUB_REF_NAME: ${{ needs.cut.outputs.tag || github.ref_name }}
         run: node scripts/release-policy.mjs classify
 
