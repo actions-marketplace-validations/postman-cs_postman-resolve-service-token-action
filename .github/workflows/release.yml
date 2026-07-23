@@ -18,6 +18,7 @@ jobs:
     outputs:
       release_kind: ${{ steps.release_tag.outputs.release_kind }}
       package_version: ${{ steps.release_tag.outputs.package_version }}
+      npm_publish: ${{ steps.release_tag.outputs.npm_publish }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -25,24 +26,7 @@ jobs:
           node-version: '24'
       - name: Verify release tag classification
         id: release_tag
-        run: |
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          IFS='.' read -r MAJOR MINOR PATCH _ <<< "$PKG_VERSION"
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          echo "package_version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
-          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
-            echo "::error::Release workflow must run from an accepted immutable tag; got $GITHUB_REF; expected v$PKG_VERSION, v$MAJOR.$MINOR when patch is zero, or v$MAJOR"
-            exit 1
-          fi
-          if [ "$TAG_VERSION" = "$PKG_VERSION" ] || { [ "$PATCH" = 0 ] && [ "$TAG_VERSION" = "$MAJOR.$MINOR" ]; }; then
-            echo "release_kind=immutable" >> "$GITHUB_OUTPUT"
-          elif [ "$TAG_VERSION" = "$MAJOR" ]; then
-            echo "release_kind=alias" >> "$GITHUB_OUTPUT"
-            echo "::notice::Rolling alias $GITHUB_REF_NAME requires no publication work."
-          else
-            echo "::error::Release workflow must run from an accepted immutable tag; got $GITHUB_REF; expected v$PKG_VERSION, v$MAJOR.$MINOR when patch is zero, or v$MAJOR"
-            exit 1
-          fi
+        run: node scripts/release-policy.mjs classify
 
   verify-package:
     needs: classify
@@ -90,18 +74,33 @@ jobs:
           test "$(NODE_OPTIONS='--this-flag-does-not-exist' "$BIN" --version)" = "$VERSION"
           node scripts/assert-sea-proxy.mjs "$BIN" api.getpostman.com:443 --postman-api-key proxy-smoke-key --postman-team-id proxy-smoke-team
           cp "$BIN" "$BIN.sha256" release-stage/
-          mkdir -p release-stage/scripts
-          cp scripts/verify-release-artifacts.mjs release-stage/scripts/
           node - <<'NODE'
-          const { createHash } = require('node:crypto'); const { readdirSync, readFileSync, writeFileSync } = require('node:fs');
-          const files = readdirSync('release-stage').filter((path) => path !== 'release-manifest.json');
+          const { createHash } = require('node:crypto');
+          const { readFileSync, writeFileSync } = require('node:fs');
+          const pkg = require('./package.json');
+          const sea = `postman-resolve-service-token-${pkg.version}-linux-x64`;
+          const paths = ['release.tgz', sea, `${sea}.sha256`];
           const sha256 = (path) => createHash('sha256').update(readFileSync(`release-stage/${path}`)).digest('hex');
-          writeFileSync('release-stage/release-manifest.json', `${JSON.stringify({ schema_version: 1, repository: process.env.GITHUB_REPOSITORY, commit_sha: process.env.GITHUB_SHA, tag: process.env.GITHUB_REF_NAME, package_name: require('./package.json').name, package_version: require('./package.json').version, artifacts: files.map((path) => ({ path, sha256: sha256(path) })) }, null, 2)}\n`);
+          writeFileSync('release-stage/release-manifest.json', `${JSON.stringify({
+            schema_version: 1,
+            repository: process.env.GITHUB_REPOSITORY,
+            commit_sha: process.env.GITHUB_SHA,
+            tag: process.env.GITHUB_REF_NAME,
+            package_name: pkg.name,
+            package_version: pkg.version,
+            artifacts: paths.map((path) => ({ path, sha256: sha256(path) }))
+          }, null, 2)}\n`);
           NODE
+      - name: Verify staged release artifacts
+        run: node scripts/verify-release-artifacts.mjs release-stage
       - uses: actions/upload-artifact@v7
         with:
           name: release-${{ github.run_id }}-${{ github.run_attempt }}
-          path: release-stage/
+          path: |
+            release-stage/release.tgz
+            release-stage/release-manifest.json
+            release-stage/postman-resolve-service-token-${{ needs.classify.outputs.package_version }}-linux-x64
+            release-stage/postman-resolve-service-token-${{ needs.classify.outputs.package_version }}-linux-x64.sha256
           if-no-files-found: error
 
   publish:
@@ -123,12 +122,42 @@ jobs:
       - name: Verify checksummed release artifacts
         run: |
           node --input-type=module - <<'NODE'
-          import { createHash } from 'node:crypto'; import { existsSync, readFileSync } from 'node:fs'; import { execFileSync } from 'node:child_process';
-          const manifest = JSON.parse(readFileSync('release-manifest.json'));
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import { existsSync, readdirSync, readFileSync } from 'node:fs';
+          import { basename } from 'node:path';
+          const SAFE = /^[A-Za-z0-9._-]+$/;
+          const HEX = /^[a-f0-9]{64}$/;
+          const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+          const manifest = JSON.parse(readFileSync('release-manifest.json', 'utf8'));
+          if (manifest.schema_version !== 1 || typeof manifest.repository !== 'string' || typeof manifest.commit_sha !== 'string' || typeof manifest.tag !== 'string' || typeof manifest.package_name !== 'string' || typeof manifest.package_version !== 'string' || !Array.isArray(manifest.artifacts)) throw new Error('invalid manifest schema');
           for (const [key, expected] of Object.entries({ repository: process.env.GITHUB_REPOSITORY, commit_sha: process.env.GITHUB_SHA, tag: process.env.GITHUB_REF_NAME })) if (manifest[key] !== expected) throw new Error(`manifest ${key} mismatch`);
+          const sea = `postman-resolve-service-token-${manifest.package_version}-linux-x64`;
+          const expectedNames = ['release.tgz', sea, `${sea}.sha256`];
+          const seen = new Set();
+          for (const artifact of manifest.artifacts) {
+            if (!artifact || typeof artifact.path !== 'string' || typeof artifact.sha256 !== 'string') throw new Error('invalid artifact manifest entry');
+            if (artifact.path !== basename(artifact.path) || artifact.path.includes('..') || artifact.path.includes('/') || !SAFE.test(artifact.path) || !HEX.test(artifact.sha256)) throw new Error(`invalid artifact ${artifact.path}`);
+            if (seen.has(artifact.path)) throw new Error(`duplicate artifact path ${artifact.path}`);
+            seen.add(artifact.path);
+          }
+          if (expectedNames.some((name) => !seen.has(name)) || seen.size !== expectedNames.length) throw new Error('exact artifact allowlist mismatch');
+          const onDisk = new Set(readdirSync('.'));
+          for (const name of expectedNames) if (!onDisk.has(name)) throw new Error(`missing artifact ${name}`);
+          for (const name of onDisk) if (name !== 'release-manifest.json' && !seen.has(name)) throw new Error(`unexpected filesystem entry ${name}`);
+          for (const artifact of manifest.artifacts) {
+            if (!existsSync(artifact.path)) throw new Error(`missing artifact ${artifact.path}`);
+            if (sha256(readFileSync(artifact.path)) !== artifact.sha256) throw new Error(`checksum mismatch for ${artifact.path}`);
+          }
           const packageJson = JSON.parse(execFileSync('tar', ['-xOf', 'release.tgz', 'package/package.json'], { encoding: 'utf8' }));
           if (packageJson.name !== manifest.package_name || packageJson.version !== manifest.package_version) throw new Error('tarball package identity mismatch');
-          for (const artifact of manifest.artifacts) { if (!/^[a-f0-9]{64}$/.test(artifact.sha256) || !existsSync(artifact.path)) throw new Error(`missing or invalid artifact ${artifact.path}`); const actual = createHash('sha256').update(readFileSync(artifact.path)).digest('hex'); if (actual !== artifact.sha256) throw new Error(`checksum mismatch for ${artifact.path}`); }
+          const [major, minor, patch] = manifest.package_version.split('.');
+          if (manifest.tag !== `v${manifest.package_version}` && !(patch === '0' && manifest.tag === `v${major}.${minor}`)) throw new Error(`tag ${manifest.tag} does not match package version ${manifest.package_version}`);
+          const sidecarText = readFileSync(`${sea}.sha256`, 'utf8').trim();
+          const [digest = '', filename = ''] = sidecarText.split(/\s+/);
+          const actual = sha256(readFileSync(sea));
+          const seaEntry = manifest.artifacts.find((artifact) => artifact.path === sea);
+          if (!HEX.test(digest) || filename !== sea || digest !== actual || !seaEntry || digest !== seaEntry.sha256) throw new Error('SEA sidecar digest does not match executable and manifest');
           NODE
       - name: Publish or verify npm package identity
         env:
@@ -159,15 +188,22 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
       - name: Advance rolling major alias without regression
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"; MAJOR="v${VERSION%%.*}"; CANDIDATE="v$VERSION"
-          CURRENT=$(git tag -l "$MAJOR")
-          if [ -n "$CURRENT" ] && [ "$(printf '%s\n%s\n' "${CURRENT#v}" "$VERSION" | sort -V | tail -1)" != "$VERSION" ]; then echo "::notice::not advancing $MAJOR because it already targets newer $CURRENT"; exit 0; fi
-          git config user.name github-actions[bot]; git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git tag -fa "$MAJOR" -m "Rolling $MAJOR alias -> $CANDIDATE" "$GITHUB_SHA"
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          MAJOR="v${VERSION%%.*}"
+          CANDIDATE="$(node -p "require('./package.json').version")"
+          DECISION="$(git ls-remote --tags origin "$MAJOR" "$MAJOR^{}" "$MAJOR.*" | node scripts/release-policy.mjs decide-alias --candidate-version "$CANDIDATE" --major "$MAJOR")"
+          ACTION="$(node -e "const d=JSON.parse(process.argv[1]); process.stdout.write(d.action)" "$DECISION")"
+          NOTICE="$(node -e "const d=JSON.parse(process.argv[1]); process.stdout.write(d.notice||'')" "$DECISION")"
+          if [ "$ACTION" = "skip" ]; then
+            echo "::notice::$NOTICE"
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git tag -fa "$MAJOR" -m "Rolling $MAJOR alias -> v$CANDIDATE" "$GITHUB_SHA"
           git push origin "$MAJOR" --force
 
   dispatch-live-monitor:
@@ -175,7 +211,6 @@ jobs:
     if: ${{ needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' }}
     continue-on-error: true
     runs-on: ubuntu-latest
-    permissions: {}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

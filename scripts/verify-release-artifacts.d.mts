@@ -8,10 +8,31 @@ export interface ReleaseManifest {
   artifacts: Array<{ path: string; sha256: string }>;
 }
 
-export function validateManifest(
-  manifest: ReleaseManifest,
-  directory: string,
-  expected: { repository: string; commitSha: string; tag: string }
-): void;
-
+export function sha256Hex(bytes: Buffer | string): string;
+export function computeNpmSri(bytes: Buffer | string): string;
+export function assertNpmSriMatch(expected: string, actual: string): void;
 export function validateTagVersion(tag: string, packageVersion: string): void;
+export function expectedArtifactNames(packageVersion: string): string[];
+export function validateManifest(
+  manifest: unknown,
+  directory: string,
+  expected: {
+    repository: string;
+    commitSha: string;
+    tag: string;
+    packageName?: string;
+    packageVersion?: string;
+  }
+): ReleaseManifest | Record<string, unknown>;
+export function validateSeaSidecar(
+  directory: string,
+  packageVersion: string,
+  artifacts: Array<{ path: string; sha256: string }>
+): void;
+export function readTarballPackageIdentity(directory: string): { name: string; version: string };
+export function verifyReleaseArtifacts(input: {
+  directory?: string;
+  repository: string;
+  commitSha: string;
+  tag: string;
+}): ReleaseManifest | Record<string, unknown>;

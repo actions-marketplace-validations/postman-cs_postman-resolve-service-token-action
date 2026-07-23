@@ -122,7 +122,7 @@ jobs:
               $done = Wait-Job -Job $running -Any
               $running = @($running | Where-Object Id -ne $done.Id)
             }
-            $running += Start-Job -Name $gate.Name -ScriptBlock { param($command) Invoke-Expression $command } -ArgumentList $gate.Command
+            $running += Start-Job -Name $gate.Name -ScriptBlock { param($command) & $env:ComSpec /d /c $command; if ($LASTEXITCODE -ne 0) { throw "gate failed with exit code $LASTEXITCODE" } } -ArgumentList $gate.Command
           }
           $failed = $false
           foreach ($gate in $running) { Wait-Job $gate | Out-Null }
