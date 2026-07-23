@@ -176,7 +176,9 @@ describe('CI dist build contract', () => {
     expect(windows).not.toContain('Receive-Job');
     expect(windows).not.toMatch(/@\{ Name = '/);
 
-    expect(windows).not.toContain('npm run bundle');
+    // dist is not committed; Windows must build it exactly once before tests.
+    expect(windows.match(/^\s*- run: npm run bundle\s*$/gm) ?? []).toHaveLength(1);
+    expect(windows.indexOf('- run: npm run bundle')).toBeLessThan(windows.indexOf('- run: npm test'));
     expect(windows).not.toContain('npm run build');
     expect(windows).not.toContain('npm run lint');
     expect(windows).not.toContain('npm run typecheck');
