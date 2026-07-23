@@ -64,4 +64,21 @@ describe('release workflow publishing contract', () => {
     expect(aliasJob).toContain('git tag -fa "$MAJOR"');
     expect(aliasJob).toContain('git push origin "$MAJOR" --force');
   });
+
+  it('dispatches the live smoke monitor asynchronously after publish', () => {
+    const publishJob = namedJob('publish');
+    const dispatchJob = namedJob('dispatch-live-monitor');
+    const aliasJob = namedJob('advance-major-alias');
+
+    expect(releaseWorkflow).not.toContain('  live-e2e-gate:');
+    expect(releaseWorkflow).not.toContain('gate_required');
+    expect(publishJob).toContain('needs: validate');
+    expect(publishJob).not.toContain('dispatch-live-monitor');
+    expect(publishJob).not.toContain('live-e2e-gate');
+    expect(dispatchJob).toContain('needs: [validate, publish]');
+    expect(dispatchJob).toContain('continue-on-error: true');
+    expect(dispatchJob).toContain('E2E_GATE_SUITE: smoke');
+    expect(dispatchJob).toContain('node .github/scripts/dispatch-e2e-monitor.mjs');
+    expect(aliasJob).not.toContain('dispatch-live-monitor');
+  });
 });

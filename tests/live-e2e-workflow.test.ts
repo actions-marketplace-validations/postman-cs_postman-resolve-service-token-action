@@ -1,22 +1,37 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-const liveE2eWorkflow = readFileSync(join(process.cwd(), '.github/workflows/live-e2e.yml'), 'utf8');
+const releaseWorkflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8');
+const ciWorkflow = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
 
-describe('live e2e workflow path filter', () => {
-  it('limits PR triggers to src/dist/action.yml/package manifests/fixtures', () => {
-    expect(liveE2eWorkflow).toMatch(/pull_request:\n(?: {4}.+\n)* {4}paths:/);
+function job(name: string): string {
+  const start = releaseWorkflow.indexOf(`  ${name}:`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const rest = releaseWorkflow.slice(start + 2);
+  const next = rest.search(/\n {2}[a-z0-9-]+:/);
+  return next === -1 ? releaseWorkflow.slice(start) : releaseWorkflow.slice(start, start + 2 + next);
+}
 
-    const pathsBlock =
-      liveE2eWorkflow.match(/pull_request:\n(?: {4}.+\n)* {4}paths:\n((?: {6}-.+\n)+)/)?.[1] ?? '';
-    const paths = pathsBlock
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith('- '))
-      .map((line) => line.slice(2).replace(/^['"]|['"]$/g, ''));
+describe('live e2e tiering contract', () => {
+  it('scopes the post-publish smoke monitor off PRs and after immutable publish', () => {
+    expect(existsSync(join(process.cwd(), '.github/workflows/live-e2e.yml'))).toBe(false);
+    expect(ciWorkflow).not.toContain('dispatch-e2e-monitor.mjs');
+    expect(ciWorkflow).not.toContain('E2E_DISPATCH_TOKEN');
+    expect(ciWorkflow).not.toContain('dispatch-live-monitor');
 
-    expect(paths).toEqual(['src/**', 'dist/**', 'action.yml', 'package*.json', 'fixtures/**']);
+    const dispatch = job('dispatch-live-monitor');
+    expect(dispatch).toContain('needs: [validate, publish]');
+    expect(dispatch).toContain(
+      "if: ${{ needs.validate.outputs.npm_publish == 'true' && needs.publish.result == 'success' }}"
+    );
+    expect(dispatch).toContain('continue-on-error: true');
+    expect(dispatch).toContain('E2E_GATE_SUITE: smoke');
+    expect(dispatch).toContain('E2E_GATE_REF: ${{ github.ref_name }}');
+    expect(dispatch).toContain('node .github/scripts/dispatch-e2e-monitor.mjs');
+    expect(dispatch).not.toContain('live-e2e-gate');
+    expect(dispatch).not.toContain('gate_required');
+    expect(dispatch).not.toContain('wait-for-e2e-gate.mjs');
   });
 });

@@ -35,37 +35,33 @@ $(go env GOPATH)/bin/actionlint
 
 - [ ] `actionlint` passes locally.
 - [ ] `npm run lint`, `npm test`, `npm run typecheck`, and `npm run verify:dist` pass locally.
-- [ ] The `Live E2E` PR check passes; PRs should not be approved or merged until the correlated `postman-actions-e2e` run succeeds.
+- [ ] The offline `gate` check passes.
 - [ ] Changes are focused and address a single concern.
 - [ ] README inputs/outputs tables match `action.yml`.
 - [ ] Behavior changes are reflected in `README.md`.
 
-## PR E2E Gate
+## Live E2E Tier
 
-Every pull request targeting `main` runs the central live e2e suite before
-approval or merge. The PR workflow dispatches `postman-cs/postman-actions-e2e`
-with the PR head SHA pinned for `postman-resolve-service-token-action`, waits
-for the correlated run to succeed, and reports that result as the `Live E2E`
-check.
-
-Because the suite runs action code with repository-scoped live sandbox credentials, the PR
-branch must live in this repository. Fork-based PRs cannot receive those secrets;
-push the branch to this repo to run the required merge gate.
+Ordinary PRs use the deterministic offline `ci.yml` gate. Live sandbox coverage
+is an asynchronous exact-tag smoke monitor after immutable publication, plus the
+nightly full monitor in `postman-cs/postman-actions-e2e`.
 
 ## Release Gate
 
-Immutable release tags for this repo are blocked by the central live e2e suite in
-`postman-cs/postman-actions-e2e` before any GitHub release, npm package, or
-release tarball is published. The release workflow validates locally, dispatches
-the e2e workflow with this exact tag pinned for
-`postman-resolve-service-token-action`, waits for the correlated run to succeed,
-and only then publishes.
+Immutable release tags for this repo publish after local validate succeeds
+(deterministic tests, typecheck, dist verify, actionlint, and tag/version
+checks). After immutable publication, the release workflow's
+`dispatch-live-monitor` job dispatches an asynchronous smoke E2E monitor in
+`postman-cs/postman-actions-e2e` with this exact tag pinned for
+`postman-resolve-service-token-action`. That dispatch is `continue-on-error`;
+missing/denied dispatch or a later monitor failure does not roll back, block, or
+fail publication.
 
-The rolling `v1` alias validates locally but skips npm publish
-and the live e2e gate. `E2E_DISPATCH_TOKEN` is release-critical for immutable
-publishing tags; if it is missing, invalid, or the e2e fails/times out, the
-release must stop before public artifacts are created. Record the e2e run URL
-and conclusion from the release logs as release evidence.
+The rolling `v1` alias validates locally but skips npm publish and the live e2e
+monitor dispatch. `E2E_DISPATCH_TOKEN` powers the post-publish smoke monitor for
+immutable publishing tags; record the dispatch notice from the release logs as
+monitor evidence. The nightly full monitor remains in
+`postman-cs/postman-actions-e2e`.
 
 ## Commit Messages
 
@@ -87,7 +83,7 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/en/
 feat: add postman-team-id passthrough input
 fix: handle 429 from /service-account-tokens
 docs: clarify github-token PAT requirement
-ci: pin actionlint to v1.7.11
+ci: dispatch post-release smoke monitor asynchronously
 ```
 
 ## Reporting Issues
