@@ -8,8 +8,15 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
+const npmCliFallback = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+
+function resolveNpmCliArgs(platform: NodeJS.Platform, npmExecPath: string | undefined): readonly string[] {
+  if (platform !== 'win32') return [];
+  return [npmExecPath || npmCliFallback];
+}
+
 const npmCommand = process.platform === 'win32' ? process.execPath : 'npm';
-const npmCliArgs = process.platform === 'win32' ? [process.env.npm_execpath || ''] : [];
+const npmCliArgs = resolveNpmCliArgs(process.platform, process.env.npm_execpath);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempDirs: string[] = [];
 const PACKED_BIN_TIMEOUT_MS = 20_000;
@@ -110,6 +117,16 @@ async function runPackedBin(
 }
 
 describe('packed-bin invocation plan', () => {
+  it('selects an explicit npm CLI entrypoint on Windows', () => {
+    expect(resolveNpmCliArgs('linux', undefined)).toEqual([]);
+    expect(resolveNpmCliArgs('win32', 'C:\\npm\\npm-cli.js')).toEqual(['C:\\npm\\npm-cli.js']);
+    expect(resolveNpmCliArgs('win32', undefined)).toEqual([npmCliFallback]);
+    expect(resolveNpmCliArgs('win32', undefined)[0]).not.toBe('');
+    expect(npmCliFallback).toBe(
+      path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    );
+  });
+
   it('keeps POSIX as direct executable plus args', () => {
     const packedBinPath = '/tmp/prefix/node_modules/.bin/postman-resolve-service-token';
     expect(planPackedBinInvocation(packedBinPath, ['--help'], { platform: 'linux' })).toEqual({
