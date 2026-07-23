@@ -11,7 +11,6 @@ const execFileAsync = promisify(execFile);
 const npmCommand = process.platform === 'win32' ? process.execPath : 'npm';
 const npmCliArgs = process.platform === 'win32' ? [process.env.npm_execpath || ''] : [];
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const binName = 'postman-resolve-service-token';
 const tempDirs: string[] = [];
 const PACKED_BIN_TIMEOUT_MS = 20_000;
 const PACKED_BIN_MAX_BUFFER = 1024 * 1024;
@@ -334,6 +333,7 @@ describe('CLI packaging contract', () => {
         : Object.entries(packedPackageJson.bin);
     expect(packedBinEntries).toHaveLength(1);
     const [[packedBinName, packedBinRelativePath]] = packedBinEntries;
+    const binName = packedBinName;
 
     const planSetup = (platform: NodeJS.Platform): { file: string; args: string[] } =>
       platform === 'win32'
@@ -362,7 +362,7 @@ describe('CLI packaging contract', () => {
     const packedBinDir = path.join(prefixDir, 'node_modules', '.bin');
     const packedBinPath = path.join(
       packedBinDir,
-      process.platform === 'win32' ? `${packedBinName}.cmd` : packedBinName
+      process.platform === 'win32' ? `${binName}.cmd` : binName
     );
     if (process.platform === 'win32') {
       const packedCliPath = path.resolve(prefixDir, 'package', packedBinRelativePath);
