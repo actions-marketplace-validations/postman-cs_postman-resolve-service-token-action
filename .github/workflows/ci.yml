@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   gate:
     runs-on: ubuntu-latest
@@ -101,8 +105,26 @@ jobs:
       - run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm run lint
-      - run: npm test
-      - run: npm run typecheck
       - run: npm run bundle
-      - run: npm run verify:dist:assert
+      - name: Run Windows gates
+        shell: pwsh
+        run: |
+          $maxParallel = 2
+          $gates = @(
+            @{ Name = 'lint'; Command = 'npm run lint' },
+            @{ Name = 'test'; Command = 'npm test' },
+            @{ Name = 'typecheck'; Command = 'npm run typecheck' },
+            @{ Name = 'dist'; Command = 'npm run verify:dist:assert' }
+          )
+          $running = @()
+          foreach ($gate in $gates) {
+            while ($running.Count -ge $maxParallel) {
+              $done = Wait-Job -Job $running -Any
+              $running = @($running | Where-Object Id -ne $done.Id)
+            }
+            $running += Start-Job -Name $gate.Name -ScriptBlock { param($command) & $env:ComSpec /d /c $command; if ($LASTEXITCODE -ne 0) { throw "gate failed with exit code $LASTEXITCODE" } } -ArgumentList $gate.Command
+          }
+          $failed = $false
+          foreach ($gate in $running) { Wait-Job $gate | Out-Null }
+          Get-Job | ForEach-Object { Receive-Job $_; if ($_.State -ne 'Completed') { $failed = $true }; "gate:$($_.Name)=$($(if ($_.State -eq 'Completed') { 'pass' } else { 'fail' }))"; Remove-Job $_ }
+          if ($failed) { exit 1 }

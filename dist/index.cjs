@@ -4492,7 +4492,7 @@ var require_webidl = __commonJS({
   "node_modules/undici/lib/web/webidl/index.js"(exports2, module2) {
     "use strict";
     var assert = require("node:assert");
-    var { types, inspect } = require("node:util");
+    var { types, inspect: inspect2 } = require("node:util");
     var { markAsUncloneable } = require("node:worker_threads");
     var UNDEFINED = 1;
     var BOOLEAN = 2;
@@ -4683,7 +4683,7 @@ var require_webidl = __commonJS({
         case SYMBOL:
           return `Symbol(${V.description})`;
         case OBJECT:
-          return inspect(V);
+          return inspect2(V);
         case STRING:
           return `"${V}"`;
         case BIGINT:
@@ -29066,6 +29066,102 @@ function resolveActionVersion2() {
   }
 }
 
+// src/pmak-diagnostics.ts
+var memo = /* @__PURE__ */ new Map();
+var CONTROL_CHARS = new RegExp(
+  `[${Array.from({ length: 32 }, (_, index) => `\\u${index.toString(16).padStart(4, "0")}`).join("")}\\u007f${Array.from({ length: 32 }, (_, index) => `\\u${(128 + index).toString(16).padStart(4, "0")}`).join("")}]`,
+  "g"
+);
+function asRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function normalizedBaseUrl(apiBaseUrl) {
+  return new URL(apiBaseUrl.trim()).toString().replace(/\/+$/, "");
+}
+function isBlank(value) {
+  return value === null || value === "";
+}
+function timeoutError() {
+  return new Error("PMAK identity diagnosis timed out");
+}
+function raceAbort(promise, signal) {
+  if (signal.aborted) return Promise.reject(timeoutError());
+  return Promise.race([
+    promise,
+    new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(timeoutError()), { once: true });
+    })
+  ]);
+}
+async function inspect(options, baseUrl) {
+  const timeoutMs = options.timeoutMs ?? 2e3;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+  const fetchImpl = options.fetchImpl ?? ((url, init) => fetch(url, init));
+  let response;
+  try {
+    response = await raceAbort(fetchImpl(`${baseUrl}/me`, {
+      headers: { "x-api-key": options.apiKey },
+      signal
+    }), signal);
+  } catch {
+    return { kind: "inconclusive" };
+  }
+  if (response.status === 401 || response.status === 403) {
+    return { kind: "invalid", status: response.status };
+  }
+  if (!response.ok) return { kind: "inconclusive", status: response.status };
+  let payload;
+  try {
+    payload = await raceAbort(response.text(), signal).then((body2) => JSON.parse(body2));
+  } catch {
+    return { kind: "inconclusive", status: response.status };
+  }
+  const body = asRecord(payload);
+  const user = asRecord(body?.user);
+  if (!body || !user) return { kind: "inconclusive", status: response.status };
+  if (typeof user.username === "string" && user.username.trim() || typeof user.email === "string" && user.email.trim()) {
+    return { kind: "personal", status: response.status, payload: body };
+  }
+  if (Object.hasOwn(user, "username") && Object.hasOwn(user, "email") && isBlank(user.username) && isBlank(user.email)) {
+    return { kind: "service-account", status: response.status, payload: body };
+  }
+  return { kind: "inconclusive", status: response.status };
+}
+function maskPmakDiagnostic(message, secrets) {
+  let masked = message;
+  for (const secret of secrets) {
+    if (secret) masked = masked.split(secret).join("***");
+  }
+  return masked.replace(CONTROL_CHARS, " ").replace(/\s+/g, " ").trim();
+}
+function formatRejectedMint(originalMintError, result) {
+  switch (result.kind) {
+    case "personal":
+      return `${originalMintError} Personal API key detected, cannot mint a service-account access token.`;
+    case "service-account":
+      return `${originalMintError} postman-api-key authenticates (GET /me OK) but was rejected by POST /service-account-tokens and lacks permission to mint access tokens.`;
+    case "invalid":
+      return `${originalMintError} postman-api-key is invalid, disabled, or expired.`;
+    case "inconclusive":
+      return originalMintError;
+  }
+}
+function inspectPmakIdentity(options) {
+  const baseUrl = normalizedBaseUrl(options.apiBaseUrl);
+  const key = `${baseUrl}\0${options.apiKey}`;
+  const existing = memo.get(key);
+  if (existing) return existing;
+  const promise = inspect(options, baseUrl);
+  memo.set(key, promise);
+  if (options.mode === "preflight") {
+    void promise.then((result) => {
+      if (result.kind === "inconclusive" && memo.get(key) === promise) memo.delete(key);
+    });
+  }
+  return promise;
+}
+
 // src/index.ts
 var DEFAULT_ACCESS_TOKEN_SECRET_NAME = "POSTMAN_ACCESS_TOKEN";
 var DEFAULT_TEAM_ID_SECRET_NAME = "POSTMAN_TEAM_ID";
@@ -29121,12 +29217,12 @@ var BEL = String.fromCharCode(7);
 var ANSI_CSI = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, "g");
 var ANSI_OSC = new RegExp(`${ESC}\\][^${BEL}${ESC}]*(?:${BEL}|${ESC}\\\\)?`, "g");
 var ANSI_SHORT = new RegExp(`${ESC}[@-_]`, "g");
-var CONTROL_CHARS = new RegExp(
+var CONTROL_CHARS2 = new RegExp(
   `[${Array.from({ length: 32 }, (_, i) => `\\u${i.toString(16).padStart(4, "0")}`).join("")}\\u007f${Array.from({ length: 32 }, (_, i) => `\\u${(128 + i).toString(16).padStart(4, "0")}`).join("")}]`,
   "g"
 );
 function collapseToOneLine(value) {
-  return value.replace(ANSI_CSI, " ").replace(ANSI_OSC, " ").replace(ANSI_SHORT, " ").replace(CONTROL_CHARS, " ").replace(/ +/g, " ").trim();
+  return value.replace(ANSI_CSI, " ").replace(ANSI_OSC, " ").replace(ANSI_SHORT, " ").replace(CONTROL_CHARS2, " ").replace(/ +/g, " ").trim();
 }
 function redactKnownSecrets(text, secrets) {
   const values = secrets.map((entry) => entry?.trim()).filter((entry) => Boolean(entry && entry.length > 0)).sort((a, b) => b.length - a.length);
@@ -29264,9 +29360,13 @@ async function mintServiceToken(inputs, apiHost, fetcher) {
   if (!response.ok) {
     const status = response.status;
     if (status === 401 || status === 403) {
-      throw new Error(
-        `POST ${endpoint} (mint service-account token): The postman-api-key was rejected (HTTP ${status}); confirm it is a valid, enabled PMAK for the intended team.`
-      );
+      const original = `POST ${endpoint} (mint service-account token): The postman-api-key was rejected (HTTP ${status}); confirm it is a valid, enabled PMAK for the intended team.`;
+      const diagnostic = await inspectPmakIdentity({
+        apiBaseUrl: apiHost,
+        apiKey: inputs.postmanApiKey ?? "",
+        fetchImpl: fetcher
+      });
+      throw new Error(formatRejectedMint(maskPmakDiagnostic(original, secrets), diagnostic));
     }
     if (status === 400 && body.toLowerCase().includes("service accounts not enabled")) {
       throw new Error(
