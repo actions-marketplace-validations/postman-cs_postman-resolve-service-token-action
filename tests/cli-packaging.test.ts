@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { access, constants, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { access, constants, mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +11,13 @@ const execFileAsync = promisify(execFile);
 const npmCommand = process.platform === 'win32' ? process.execPath : 'npm';
 const npmCliArgs = process.platform === 'win32' ? [process.env.npm_execpath || ''] : [];
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const binName = 'postman-resolve-service-token';
 const tempDirs: string[] = [];
+const PACKED_BIN_TIMEOUT_MS = 20_000;
+const PACKED_BIN_MAX_BUFFER = 1024 * 1024;
+const PACKED_BIN_FIXED_ARGS = new Set(['--help', '--version']);
+/** Reject cmd.exe metacharacters that could alter `/c` parsing. */
+const CMD_REJECT_RE = /[\r\n"%!^&|<>]/;
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -22,6 +28,161 @@ async function makeTempDir(prefix: string): Promise<string> {
   tempDirs.push(dir);
   return dir;
 }
+
+async function assertSandboxUnchanged(sandbox: string): Promise<void> {
+  const written = await readdir(sandbox, { recursive: true });
+  expect(written).toEqual([]);
+}
+
+type PackedBinInvocationPlan = Readonly<{
+  file: string;
+  args: readonly string[];
+}>;
+
+function assertSafeCmdToken(value: string, label: string): void {
+  if (CMD_REJECT_RE.test(value)) {
+    throw new Error(`${label} contains rejected cmd.exe metacharacters`);
+  }
+}
+
+/**
+ * Cross-platform plan for invoking an npm-packed bin.
+ * POSIX: execFile the executable directly.
+ * Windows: execFile ComSpec/cmd.exe with `/d /s /c` and one quoted command payload
+ * (never execFile the `.cmd` shim itself).
+ */
+function planPackedBinInvocation(
+  binPath: string,
+  args: readonly string[],
+  options?: {
+    platform?: NodeJS.Platform;
+    env?: NodeJS.ProcessEnv;
+  }
+): PackedBinInvocationPlan {
+  const platform = options?.platform ?? process.platform;
+
+  if (platform !== 'win32') {
+    if (args.length !== 1 || !PACKED_BIN_FIXED_ARGS.has(args[0]!)) {
+      throw new Error(`packed-bin args must be exactly --help or --version; got ${JSON.stringify(args)}`);
+    }
+    return { file: binPath, args: [...args] };
+  }
+
+  // Reject metacharacters before any cmd.exe argv is assembled.
+  assertSafeCmdToken(binPath, 'binPath');
+  for (const arg of args) {
+    assertSafeCmdToken(arg, 'arg');
+  }
+
+  if (args.length !== 1 || !PACKED_BIN_FIXED_ARGS.has(args[0]!)) {
+    throw new Error(`packed-bin args must be exactly --help or --version; got ${JSON.stringify(args)}`);
+  }
+
+  // Injected env supports Linux-runnable win32 plan tests; otherwise process.env.
+  const comSpec =
+    options?.env?.ComSpec ?? options?.env?.COMSPEC ?? process.env.ComSpec ?? process.env.COMSPEC ?? 'cmd.exe';
+  const command = [`"${binPath}"`, ...args].join(' ');
+  return {
+    file: comSpec,
+    args: ['/d', '/s', '/c', command]
+  };
+}
+
+async function runPackedBin(
+  binPath: string,
+  args: readonly string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv }
+): Promise<{ stdout: string; stderr: string }> {
+  const plan = planPackedBinInvocation(binPath, args);
+  return execFileAsync(plan.file, [...plan.args], {
+    cwd: options.cwd,
+    encoding: 'utf8',
+    env: options.env,
+    timeout: PACKED_BIN_TIMEOUT_MS,
+    maxBuffer: PACKED_BIN_MAX_BUFFER
+  });
+}
+
+describe('packed-bin invocation plan', () => {
+  it('keeps POSIX as direct executable plus args', () => {
+    const packedBinPath = '/tmp/prefix/node_modules/.bin/postman-resolve-service-token';
+    expect(planPackedBinInvocation(packedBinPath, ['--help'], { platform: 'linux' })).toEqual({
+      file: packedBinPath,
+      args: ['--help']
+    });
+    expect(planPackedBinInvocation(packedBinPath, ['--version'], { platform: 'darwin' })).toEqual({
+      file: packedBinPath,
+      args: ['--version']
+    });
+  });
+
+  it('selects ComSpec/COMSPEC/cmd.exe on win32 and never plans execFile of .cmd', () => {
+    const packedBinPath = 'C:\\Program Files\\pkg\\postman-resolve-service-token.cmd';
+
+    const viaComSpec = planPackedBinInvocation(packedBinPath, ['--help'], {
+      platform: 'win32',
+      env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe', COMSPEC: 'ignored.exe' }
+    });
+    expect(viaComSpec.file).toBe('C:\\Windows\\System32\\cmd.exe');
+    expect(viaComSpec.file.toLowerCase()).not.toMatch(/\.cmd$/);
+    expect(viaComSpec.args).toEqual(['/d', '/s', '/c', `"${packedBinPath}" --help`]);
+
+    const viaComspecEnv = planPackedBinInvocation(packedBinPath, ['--version'], {
+      platform: 'win32',
+      env: { COMSPEC: 'D:\\custom\\cmd.exe' }
+    });
+    expect(viaComspecEnv.file).toBe('D:\\custom\\cmd.exe');
+    expect(viaComspecEnv.args).toEqual(['/d', '/s', '/c', `"${packedBinPath}" --version`]);
+
+    const fallback = planPackedBinInvocation(packedBinPath, ['--help'], {
+      platform: 'win32',
+      env: {}
+    });
+    expect(fallback.file).toBe('cmd.exe');
+    expect(fallback.args[3]).toContain('"');
+    expect(fallback.args[3]).toContain('Program Files');
+  });
+
+  it('quotes a win32 path with spaces inside the single /c payload', () => {
+    const packedBinPath = 'C:\\Users\\Test User\\node_modules\\.bin\\postman-resolve-service-token.cmd';
+    const plan = planPackedBinInvocation(packedBinPath, ['--help'], {
+      platform: 'win32',
+      env: { ComSpec: 'cmd.exe' }
+    });
+    expect(plan.args).toEqual(['/d', '/s', '/c', `"${packedBinPath}" --help`]);
+    expect(plan.args[3]).toMatch(/^".+" --help$/);
+  });
+
+  it('rejects cmd.exe metacharacters in win32 path and args before invoke', () => {
+    const safe = 'C:\\pkg\\postman-resolve-service-token.cmd';
+    const rejected = ['\r', '\n', '"', '%', '!', '^', '&', '|', '<', '>'] as const;
+
+    for (const ch of rejected) {
+      expect(() =>
+        planPackedBinInvocation(`C:\\pkg\\evil${ch}tool.cmd`, ['--help'], {
+          platform: 'win32',
+          env: {}
+        })
+      ).toThrow(/rejected cmd\.exe metacharacters/);
+
+      expect(() =>
+        planPackedBinInvocation(safe, [`--help${ch}`], {
+          platform: 'win32',
+          env: {}
+        })
+      ).toThrow(/rejected cmd\.exe metacharacters/);
+    }
+
+    expect(() => planPackedBinInvocation(safe, ['--help'], { platform: 'win32', env: {} })).not.toThrow();
+
+    expect(() => planPackedBinInvocation(safe, ['--unknown'], { platform: 'win32', env: {} })).toThrow(
+      /packed-bin args must be exactly/
+    );
+    expect(() => planPackedBinInvocation(safe, ['--help', '--version'], { platform: 'linux' })).toThrow(
+      /packed-bin args must be exactly/
+    );
+  });
+});
 
 describe('CLI packaging contract', () => {
   it('commits a Node shebang and git-index executable mode on dist/cli.cjs', async () => {
@@ -75,10 +236,7 @@ describe('CLI packaging contract', () => {
     });
     expect(version.stdout.trim()).toBe(packageJson.version);
 
-    const written = await import('node:fs/promises').then(({ readdir }) =>
-      readdir(sandbox, { recursive: true })
-    );
-    expect(written).toEqual([]);
+    await assertSandboxUnchanged(sandbox);
   }, 20_000);
 
   it('prefers CLI credential flags over action and plain environment values', async () => {
@@ -119,6 +277,7 @@ describe('CLI packaging contract', () => {
   it('packs, installs, and runs postman-resolve-service-token --help/--version without side effects', async () => {
     const packDir = await makeTempDir('postman-resolve-service-token-pack-');
     const prefixDir = await makeTempDir('postman-resolve-service-token-prefix-');
+    const binSandbox = await makeTempDir('postman-resolve-service-token-bin-sandbox-');
     const distBefore = new Map(
       await Promise.all(
         ['cli.cjs', 'index.cjs'].map(async (name) => [name, await readFile(path.join(repoRoot, 'dist', name))] as const)
@@ -163,24 +322,27 @@ describe('CLI packaging contract', () => {
       maxBuffer: 20 * 1024 * 1024
     });
 
-    const binPath = path.join(
+    const packedBinPath = path.join(
       prefixDir,
       'node_modules',
-      '@postman-cse',
-      'onboarding-resolve-service-token',
-      'dist',
-      'cli.cjs'
+      '.bin',
+      process.platform === 'win32' ? `${binName}.cmd` : binName
     );
 
-    const help = await execFileAsync(process.execPath, [binPath, '--help'], {
-      encoding: 'utf8',
+    // Prove the planned file is never the .cmd shim on Windows (Linux-safe structural check).
+    const plannedHelp = planPackedBinInvocation(packedBinPath, ['--help']);
+    expect(plannedHelp.file.toLowerCase()).not.toMatch(/\.cmd$/);
+
+    const help = await runPackedBin(packedBinPath, ['--help'], {
+      cwd: binSandbox,
       env: {
         PATH: process.env.PATH ?? '',
         INPUT_POSTMAN_API_KEY: 'should-not-be-used',
         POSTMAN_API_KEY: 'should-not-be-used',
-        POSTMAN_ACCESS_TOKEN: 'should-not-be-used'
-      },
-      maxBuffer: 1024 * 1024
+        POSTMAN_ACCESS_TOKEN: 'should-not-be-used',
+        HOME: binSandbox,
+        TMPDIR: binSandbox
+      }
     });
 
     expect(help.stdout).toMatch(/Usage:\s+postman-resolve-service-token/i);
@@ -189,15 +351,19 @@ describe('CLI packaging contract', () => {
     );
     expect(help.stdout).not.toMatch(/"use strict"/);
 
-    const version = await execFileAsync(process.execPath, [binPath, '--version'], {
-      encoding: 'utf8',
-      env: { PATH: process.env.PATH ?? '' },
-      maxBuffer: 1024 * 1024
+    const version = await runPackedBin(packedBinPath, ['--version'], {
+      cwd: binSandbox,
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: binSandbox,
+        TMPDIR: binSandbox
+      }
     });
     const packageJson = JSON.parse(await readFile(path.join(repoRoot, 'package.json'), 'utf8')) as {
       version: string;
     };
     expect(version.stdout.trim()).toBe(packageJson.version);
+    await assertSandboxUnchanged(binSandbox);
 
     for (const [name, before] of distBefore) {
       expect(await readFile(path.join(repoRoot, 'dist', name))).toEqual(before);
@@ -218,8 +384,8 @@ describe('CLI packaging contract', () => {
       .sort();
     expect(entries).toEqual(['cli.cjs', 'index.cjs']);
 
-    const onDisk = (await import('node:fs/promises')).readdir(distDir);
-    expect((await onDisk).slice().sort()).toEqual(['cli.cjs', 'index.cjs']);
+    const onDisk = await readdir(distDir);
+    expect(onDisk.slice().sort()).toEqual(['cli.cjs', 'index.cjs']);
   });
 
   it('does not rebuild dist from packaging tests', async () => {
@@ -239,5 +405,6 @@ describe('CLI packaging contract', () => {
     expect(packagingSource).not.toMatch(/\bnpm run (?:build|bundle)\b/);
     expect(packagingSource).not.toMatch(/\besbuild\b/);
     expect(packagingSource).not.toMatch(new RegExp(bannedRebuild.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    expect(packagingSource).not.toMatch(/\bshell:\s*true\b/);
   });
 });
