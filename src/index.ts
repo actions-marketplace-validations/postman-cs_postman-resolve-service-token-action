@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 import { resolveActionVersion } from './action-version.js';
+import { formatRejectedMint, inspectPmakIdentity, maskPmakDiagnostic } from './pmak-diagnostics.js';
 
 export type PostmanStack = 'prod' | 'beta';
 
@@ -325,9 +326,13 @@ async function mintServiceToken(inputs: ResolveInputs, apiHost: string, fetcher:
   if (!response.ok) {
     const status = response.status;
     if (status === 401 || status === 403) {
-      throw new Error(
-        `POST ${endpoint} (mint service-account token): The postman-api-key was rejected (HTTP ${status}); confirm it is a valid, enabled PMAK for the intended team.`
-      );
+      const original = `POST ${endpoint} (mint service-account token): The postman-api-key was rejected (HTTP ${status}); confirm it is a valid, enabled PMAK for the intended team.`;
+      const diagnostic = await inspectPmakIdentity({
+        apiBaseUrl: apiHost,
+        apiKey: inputs.postmanApiKey ?? '',
+        fetchImpl: fetcher
+      });
+      throw new Error(formatRejectedMint(maskPmakDiagnostic(original, secrets), diagnostic));
     }
     if (status === 400 && body.toLowerCase().includes('service accounts not enabled')) {
       throw new Error(

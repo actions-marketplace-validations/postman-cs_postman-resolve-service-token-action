@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from 'vitest';
 
 import { runResolveServiceToken, type ResolveDependencies } from '../src/index.js';
 import { resolveTokenIdentity, __resetIdentityMemo } from '../src/credential-identity.js';
+import { __resetPmakDiagnosticMemo, inspectPmakIdentity } from '../src/pmak-diagnostics.js';
 
 function expectNoTerminalControls(text: string): void {
   for (let i = 0; i < text.length; i += 1) {
@@ -36,9 +37,110 @@ function createCore() {
 
 beforeEach(() => {
   __resetIdentityMemo();
+  __resetPmakDiagnosticMemo();
 });
 
 describe('mint failure error messages', () => {
+  test.each([
+    [
+      'personal PMAK',
+      401,
+      { user: { username: 'jane-doe', email: 'jane@example.com' } },
+      'Personal API key detected, cannot mint a service-account access token'
+    ],
+    [
+      'service-account PMAK without mint permission',
+      403,
+      { user: { username: null, email: '' } },
+      'postman-api-key authenticates (GET /me OK) but was rejected by POST /service-account-tokens and lacks permission to mint access tokens'
+    ],
+    [
+      'invalid PMAK',
+      401,
+      undefined,
+      'postman-api-key is invalid, disabled, or expired'
+    ]
+  ])('classifies %s after rejected mint without leaking identity or PMAK', async (_name, mintStatus, meBody, expected) => {
+    const harness = createCore();
+    const pmak = 'PMAK-diagnostic-secret';
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const dependencies: ResolveDependencies = {
+      core: harness.core,
+      fetcher: async (url, init) => {
+        calls.push({ url: String(url), init });
+        if (String(url).endsWith('/service-account-tokens')) return new Response('{}', { status: mintStatus });
+        if (String(url).endsWith('/me')) {
+          return new Response(meBody ? JSON.stringify(meBody) : '{}', { status: meBody ? 200 : 401 });
+        }
+        throw new Error('unexpected fetch');
+      },
+      execFile: async () => ({ stdout: '', stderr: '' })
+    };
+
+    await expect(runResolveServiceToken({
+      postmanApiKey: pmak,
+      postmanStack: 'prod',
+      writeGithubSecret: false,
+      accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
+      teamIdSecretName: 'POSTMAN_TEAM_ID'
+    }, dependencies)).rejects.toThrow(expected);
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://api.getpostman.com/service-account-tokens',
+      'https://api.getpostman.com/me'
+    ]);
+    expect(calls[1]?.init?.headers).toEqual({ 'x-api-key': pmak });
+  });
+
+  test('returns the masked original mint failure when diagnosis is inconclusive', async () => {
+    const harness = createCore();
+    const pmak = 'PMAK-sentinel';
+    let meCalls = 0;
+    const dependencies: ResolveDependencies = {
+      core: harness.core,
+      fetcher: async (url) => {
+        if (String(url).endsWith('/service-account-tokens')) return new Response('{}', { status: 401 });
+        meCalls += 1;
+        throw new Error(`transport ${pmak}\r\nPMAK rejected, HTTP 401`);
+      },
+      execFile: async () => ({ stdout: '', stderr: '' })
+    };
+
+    let message = '';
+    try {
+      await runResolveServiceToken({
+        postmanApiKey: pmak,
+        postmanStack: 'prod',
+        writeGithubSecret: false,
+        accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
+        teamIdSecretName: 'POSTMAN_TEAM_ID'
+      }, dependencies);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(meCalls).toBe(1);
+    expect(message).toBe('POST https://api.getpostman.com/service-account-tokens (mint service-account token): The postman-api-key was rejected (HTTP 401); confirm it is a valid, enabled PMAK for the intended team.');
+    expect(message).not.toContain(pmak);
+    expectNoTerminalControls(message);
+  });
+
+  test('memoizes concurrent diagnostics by normalized API host and PMAK', async () => {
+    let calls = 0;
+    const fetcher = async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ user: { username: null, email: null } }), { status: 200 });
+    };
+
+    const results = await Promise.all([
+      inspectPmakIdentity({ apiBaseUrl: 'https://api.getpostman.com/', apiKey: 'pmak-cache', fetchImpl: fetcher }),
+      inspectPmakIdentity({ apiBaseUrl: 'https://api.getpostman.com', apiKey: 'pmak-cache', fetchImpl: fetcher }),
+      inspectPmakIdentity({ apiBaseUrl: 'https://api.getpostman.com/', apiKey: 'pmak-cache', fetchImpl: fetcher })
+    ]);
+
+    expect(calls).toBe(1);
+    expect(results.map((result) => result.kind)).toEqual(['service-account', 'service-account', 'service-account']);
+  });
   test('mint failure on 403 yields actionable PMAK message', async () => {
     const harness = createCore();
     const pmak = 'pmak-403-SECRET';
