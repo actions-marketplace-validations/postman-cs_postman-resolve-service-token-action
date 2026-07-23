@@ -2,25 +2,54 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
-    inputs:
-      e2e_failure_injection:
-        description: 'Release-gate test hook for maintainers. Use pre_live_fail to prove publish is blocked before live e2e work.'
-        required: false
-        type: string
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
-  validate:
+  classify:
     runs-on: ubuntu-latest
     outputs:
-      npm_publish: ${{ steps.release_tag.outputs.npm_publish }}
-      gate_required: ${{ steps.release_tag.outputs.gate_required }}
+      release_kind: ${{ steps.release_tag.outputs.release_kind }}
+      package_version: ${{ steps.release_tag.outputs.package_version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Verify release tag classification
+        id: release_tag
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          IFS='.' read -r MAJOR MINOR PATCH _ <<< "$PKG_VERSION"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "package_version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "::error::Release workflow must run from an accepted immutable tag; got $GITHUB_REF; expected v$PKG_VERSION, v$MAJOR.$MINOR when patch is zero, or v$MAJOR"
+            exit 1
+          fi
+          if [ "$TAG_VERSION" = "$PKG_VERSION" ] || { [ "$PATCH" = 0 ] && [ "$TAG_VERSION" = "$MAJOR.$MINOR" ]; }; then
+            echo "release_kind=immutable" >> "$GITHUB_OUTPUT"
+          elif [ "$TAG_VERSION" = "$MAJOR" ]; then
+            echo "release_kind=alias" >> "$GITHUB_OUTPUT"
+            echo "::notice::Rolling alias $GITHUB_REF_NAME requires no publication work."
+          else
+            echo "::error::Release workflow must run from an accepted immutable tag; got $GITHUB_REF; expected v$PKG_VERSION, v$MAJOR.$MINOR when patch is zero, or v$MAJOR"
+            exit 1
+          fi
+
+  verify-package:
+    needs: classify
+    if: ${{ needs.classify.outputs.release_kind == 'immutable' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -28,184 +57,131 @@ jobs:
           node-version: '24'
           cache: npm
           registry-url: 'https://registry.npmjs.org'
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.24'
       - run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm test
-      - run: npm run typecheck
-      - run: npm run verify:dist
       - name: Install actionlint
-        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
-      - name: Run actionlint
         run: |
-          ACTIONLINT_BIN="$(go env GOPATH)/bin/actionlint"
-          "$ACTIONLINT_BIN"
-      - name: Verify release tag matches package version
-        id: release_tag
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.11 "$RUNNER_TEMP"
+          echo "ACTIONLINT_BIN=$RUNNER_TEMP/actionlint" >> "$GITHUB_ENV"
+      - run: npm run bundle
+      - name: Run gates
         run: |
-          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
-            echo "::error::Release workflow must run from a v* tag; got $GITHUB_REF"
-            exit 1
-          fi
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          IFS='.' read -r MAJOR MINOR PATCH _ <<< "$PKG_VERSION"
-          PUBLISH_TAGS=("$PKG_VERSION")
-          if [ "${PATCH:-}" = "0" ] && [ -n "${MINOR:-}" ]; then
-            PUBLISH_TAGS+=("$MAJOR.$MINOR")
-          fi
-          for PUBLISH_TAG in "${PUBLISH_TAGS[@]}"; do
-            if [ "$TAG_VERSION" = "$PUBLISH_TAG" ]; then
-              echo "npm_publish=true" >> "$GITHUB_OUTPUT"
-              echo "gate_required=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done
-          if [ "$TAG_VERSION" = "$MAJOR" ]; then
-            echo "npm_publish=false" >> "$GITHUB_OUTPUT"
-            echo "gate_required=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Tag v$TAG_VERSION is the rolling major alias for package version $PKG_VERSION; skipping npm publish and live e2e gate."
-            exit 0
-          fi
-          if [ "${#PUBLISH_TAGS[@]}" -eq 2 ]; then
-            EXPECTED="v${PUBLISH_TAGS[0]}, v${PUBLISH_TAGS[1]}, or v$MAJOR"
-          else
-            EXPECTED="v${PUBLISH_TAGS[0]} or v$MAJOR"
-          fi
-          echo "::error::Tag v$TAG_VERSION does not match package.json version $PKG_VERSION; expected $EXPECTED"
-          exit 1
-
-  live-e2e-gate:
-    # Covered immutable release tags must pass the central live sandbox e2e before
-    # any public artifact (GitHub release, npm package, or tarball upload) is
-    # created. The central workflow owns live Postman credentials and serializes
-    # sandbox access; this repo only dispatches and waits for the correlated run.
-    needs: validate
-    if: ${{ needs.validate.outputs.gate_required == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+          set -uo pipefail
+          declare -A pid=() result=(); declare -a names=(); MAX_PARALLEL_GATES=2
+          finish_one() { local finished_pid status n; if wait -n -p finished_pid "${pid[@]}"; then status=0; else status=$?; fi; for n in "${!pid[@]}"; do if [ "${pid[$n]}" = "$finished_pid" ]; then result[$n]=$status; unset 'pid[$n]'; return; fi; done; }
+          run() { while [ "${#pid[@]}" -ge "$MAX_PARALLEL_GATES" ]; do finish_one; done; local n=$1; shift; names+=("$n"); ( "$@" ) >"$n.log" 2>&1 & pid[$n]=$!; }
+          run lint npm run lint
+          run test npm test
+          run typecheck npm run typecheck
+          run dist npm run verify:dist:assert
+          run actionlint "$ACTIONLINT_BIN"
+          while [ "${#pid[@]}" -gt 0 ]; do finish_one; done
+          fail=0; for n in "${names[@]}"; do if [ "${result[$n]}" -eq 0 ]; then echo "gate:$n=pass"; else echo "gate:$n=fail"; fail=1; fi; cat "$n.log"; done; exit $fail
+      - name: Package release bytes
+        run: |
+          mkdir release-stage
+          npm pack --pack-destination release-stage
+          mv release-stage/*.tgz release-stage/release.tgz
+          bash scripts/build-sea.sh
+          VERSION="${{ needs.classify.outputs.package_version }}"
+          BIN="build/sea/postman-resolve-service-token-${VERSION}-linux-x64"
+          out="$(env -i PATH=/nonexistent "$BIN" 2>&1 || true)"
+          echo "$out" | grep -qE 'is missing or invalid|is required'
+          test "$(env -i PATH=/nonexistent "$BIN" --version)" = "$VERSION"
+          test "$(NODE_OPTIONS='--this-flag-does-not-exist' "$BIN" --version)" = "$VERSION"
+          node scripts/assert-sea-proxy.mjs "$BIN" api.getpostman.com:443 --postman-api-key proxy-smoke-key --postman-team-id proxy-smoke-team
+          cp "$BIN" "$BIN.sha256" release-stage/
+          mkdir -p release-stage/scripts
+          cp scripts/verify-release-artifacts.mjs release-stage/scripts/
+          node - <<'NODE'
+          const { createHash } = require('node:crypto'); const { readdirSync, readFileSync, writeFileSync } = require('node:fs');
+          const files = readdirSync('release-stage').filter((path) => path !== 'release-manifest.json');
+          const sha256 = (path) => createHash('sha256').update(readFileSync(`release-stage/${path}`)).digest('hex');
+          writeFileSync('release-stage/release-manifest.json', `${JSON.stringify({ schema_version: 1, repository: process.env.GITHUB_REPOSITORY, commit_sha: process.env.GITHUB_SHA, tag: process.env.GITHUB_REF_NAME, package_name: require('./package.json').name, package_version: require('./package.json').version, artifacts: files.map((path) => ({ path, sha256: sha256(path) })) }, null, 2)}\n`);
+          NODE
+      - uses: actions/upload-artifact@v7
         with:
-          node-version: '24'
-      - name: Wait for postman-actions-e2e release gate
-        env:
-          E2E_DISPATCH_TOKEN: ${{ secrets.E2E_DISPATCH_TOKEN }}
-          E2E_GATE_FAILURE_INJECTION: ${{ inputs.e2e_failure_injection || '' }}
-          E2E_GATE_SUITE: smoke
-        run: node .github/scripts/wait-for-e2e-gate.mjs
+          name: release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-stage/
+          if-no-files-found: error
 
   publish:
-    needs:
-      - validate
-      - live-e2e-gate
-    if: ${{ always() && needs.validate.result == 'success' && (needs.validate.outputs.gate_required != 'true' || needs.live-e2e-gate.result == 'success') }}
+    needs: [classify, verify-package]
+    if: ${{ needs.classify.outputs.release_kind == 'immutable' && needs.verify-package.result == 'success' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
-      - run: npm ci
+      - name: Verify checksummed release artifacts
+        run: |
+          node --input-type=module - <<'NODE'
+          import { createHash } from 'node:crypto'; import { existsSync, readFileSync } from 'node:fs'; import { execFileSync } from 'node:child_process';
+          const manifest = JSON.parse(readFileSync('release-manifest.json'));
+          for (const [key, expected] of Object.entries({ repository: process.env.GITHUB_REPOSITORY, commit_sha: process.env.GITHUB_SHA, tag: process.env.GITHUB_REF_NAME })) if (manifest[key] !== expected) throw new Error(`manifest ${key} mismatch`);
+          const packageJson = JSON.parse(execFileSync('tar', ['-xOf', 'release.tgz', 'package/package.json'], { encoding: 'utf8' }));
+          if (packageJson.name !== manifest.package_name || packageJson.version !== manifest.package_version) throw new Error('tarball package identity mismatch');
+          for (const artifact of manifest.artifacts) { if (!/^[a-f0-9]{64}$/.test(artifact.sha256) || !existsSync(artifact.path)) throw new Error(`missing or invalid artifact ${artifact.path}`); const actual = createHash('sha256').update(readFileSync(artifact.path)).digest('hex'); if (actual !== artifact.sha256) throw new Error(`checksum mismatch for ${artifact.path}`); }
+          NODE
+      - name: Publish or verify npm package identity
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Build self-contained SEA binary
-        run: bash scripts/build-sea.sh
-      - name: Smoke test SEA binary with an empty environment
-        # Tag releases do not trigger sea-binary.yml, so smoke the artifact here
-        # before any publish/upload -- we never ship a binary we have not executed.
-        # A SEA embeds its runtime and never consults PATH for node, so an empty env
-        # with a bogus PATH proves self-containment (no base image to pull).
         run: |
-          VERSION="$(node -p "require('./package.json').version")"
-          BIN="$PWD/build/sea/postman-resolve-service-token-${VERSION}-linux-x64"
-          out="$(env -i PATH=/nonexistent "$BIN" 2>&1 || true)"
-          echo "$out"
-          if ! echo "$out" | grep -qE "is missing or invalid|is required"; then
-            echo "::error::SEA binary did not reach input validation with an empty environment"
-            exit 1
+          PKG_NAME=$(node -e "const m=require('./release-manifest.json'); console.log(m.package_name)")
+          PKG_VERSION=$(node -e "const m=require('./release-manifest.json'); console.log(m.package_version)")
+          if INTEGRITY=$(npm view "$PKG_NAME@$PKG_VERSION" dist.integrity 2>/dev/null); then
+            ACTUAL=$(node -e "const {createHash}=require('node:crypto'); console.log('sha512-'+createHash('sha512').update(require('node:fs').readFileSync('release.tgz')).digest('base64'))")
+            test "$INTEGRITY" = "$ACTUAL" || { echo '::error::existing npm package integrity differs from staged tarball'; exit 1; }
+          else
+            npm publish ./release.tgz --provenance --access public
           fi
-          ver="$(env -i PATH=/nonexistent "$BIN" --version 2>/dev/null || true)"
-          echo "--version -> $ver"
-          if [ "$ver" != "$VERSION" ]; then
-            echo "::error::SEA --version reported '$ver', expected '$VERSION' (version not embedded)"
-            exit 1
-          fi
-          # Hermetic runtime: sea-config.json sets execArgvExtension=none, so the
-          # binary must ignore ambient NODE_OPTIONS. A bogus flag node would reject
-          # at startup must NOT reach the runtime -- --version still prints cleanly.
-          hardened="$(NODE_OPTIONS='--this-flag-does-not-exist' "$BIN" --version 2>/dev/null || true)"
-          echo "hardened --version -> $hardened"
-          if [ "$hardened" != "$VERSION" ]; then
-            echo "::error::SEA honored ambient NODE_OPTIONS; expected execArgvExtension=none to ignore it"
-            exit 1
-          fi
-      - name: Smoke test SEA proxy routing
-        run: |
-          VERSION="$(node -p "require('./package.json').version")"
-          BIN="$PWD/build/sea/postman-resolve-service-token-${VERSION}-linux-x64"
-          node scripts/assert-sea-proxy.mjs "$BIN" api.getpostman.com:443 \
-            --postman-api-key proxy-smoke-key \
-            --postman-team-id proxy-smoke-team
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true
-      - name: Check npm package version
-        id: npm_package
-        if: needs.validate.outputs.npm_publish == 'true'
-        run: |
-          PKG_NAME=$(node -p "require('./package.json').name")
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if npm view "$PKG_NAME@$PKG_VERSION" version >/dev/null 2>&1; then
-            echo "already_published=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::$PKG_NAME@$PKG_VERSION is already published; skipping npm publish."
-          else
-            echo "already_published=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Publish to npm
-        if: needs.validate.outputs.npm_publish == 'true' && steps.npm_package.outputs.already_published != 'true'
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Attach npm tarball to release
-        run: |
-          npm pack
-          mv ./*.tgz release.tgz
-      - name: Upload tarball and SEA binary
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
           files: |
             release.tgz
-            build/sea/postman-resolve-service-token-*-linux-x64
-            build/sea/postman-resolve-service-token-*-linux-x64.sha256
+            postman-resolve-service-token-*-linux-x64
+            postman-resolve-service-token-*-linux-x64.sha256
+            release-manifest.json
 
   advance-major-alias:
-    # Keep the rolling major alias (e.g. v2) pointing at the newest published
-    # release so consumers pinned to the alias pick it up automatically.
-    # GITHUB_TOKEN pushes do not re-trigger workflows, so moving the alias
-    # here cannot recurse into another Release run.
-    needs:
-      - validate
-      - publish
-    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.validate.outputs.npm_publish == 'true' }}
+    needs: [classify, publish]
+    if: ${{ needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
-      - name: Force-move rolling major alias tag
+        with:
+          fetch-depth: 0
+      - name: Advance rolling major alias without regression
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          MAJOR="v${VERSION%%.*}"
-          if [ "$MAJOR" = "v$VERSION" ]; then
-            echo "::notice::Tag $GITHUB_REF_NAME is already a major alias; nothing to move."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          COMMIT="$(git rev-parse "HEAD^{commit}")"
-          git tag -fa "$MAJOR" -m "Rolling $MAJOR alias -> $GITHUB_REF_NAME" "$COMMIT"
+          VERSION="${GITHUB_REF_NAME#v}"; MAJOR="v${VERSION%%.*}"; CANDIDATE="v$VERSION"
+          CURRENT=$(git tag -l "$MAJOR")
+          if [ -n "$CURRENT" ] && [ "$(printf '%s\n%s\n' "${CURRENT#v}" "$VERSION" | sort -V | tail -1)" != "$VERSION" ]; then echo "::notice::not advancing $MAJOR because it already targets newer $CURRENT"; exit 0; fi
+          git config user.name github-actions[bot]; git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git tag -fa "$MAJOR" -m "Rolling $MAJOR alias -> $CANDIDATE" "$GITHUB_SHA"
           git push origin "$MAJOR" --force
+
+  dispatch-live-monitor:
+    needs: [classify, publish]
+    if: ${{ needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - env:
+          E2E_DISPATCH_TOKEN: ${{ secrets.E2E_DISPATCH_TOKEN }}
+          E2E_GATE_SUITE: smoke
+        run: node .github/scripts/dispatch-e2e-monitor.mjs

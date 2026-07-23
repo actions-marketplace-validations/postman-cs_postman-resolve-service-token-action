@@ -8,11 +8,13 @@ export default tseslint.config(
     ignores: ['dist/', 'node_modules/'],
   },
   {
-    files: ['scripts/**/*.mjs'],
+    files: ['.github/scripts/**/*.mjs', 'scripts/**/*.mjs'],
     languageOptions: {
       globals: {
         process: 'readonly',
         console: 'readonly',
+        fetch: 'readonly',
+        URL: 'readonly',
       },
     },
   },

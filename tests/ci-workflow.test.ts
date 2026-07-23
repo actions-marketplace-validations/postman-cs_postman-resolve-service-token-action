@@ -17,5 +17,12 @@ describe('CI dist build contract', () => {
     expect(ciWorkflow).toContain('wait -n -p finished_pid');
     expect(ciWorkflow).toContain('name: Windows gate');
     expect(ciWorkflow).toContain('runs-on: windows-latest');
+    expect(ciWorkflow).toContain('group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}');
+    expect(ciWorkflow).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
+    expect(ciWorkflow.indexOf('npm run bundle', ciWorkflow.indexOf('name: Windows gate'))).toBeLessThan(
+      ciWorkflow.indexOf('name: Run Windows gates')
+    );
+    expect(ciWorkflow).toContain('$maxParallel = 2');
+    expect(ciWorkflow).toContain('npm run verify:dist:assert');
   });
 });
