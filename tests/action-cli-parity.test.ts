@@ -24,7 +24,7 @@ function actionManifestInputs(): string[] {
     }
     if (/^\S/.test(line)) inInputs = false;
     if (inInputs) {
-      const match = line.match(/^  ([a-z0-9-]+):\s*$/);
+      const match = line.match(/^ {2}([a-z0-9-]+):\s*$/);
       if (match) inputs.push(match[1]);
     }
   }
