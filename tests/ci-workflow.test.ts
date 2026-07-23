@@ -198,8 +198,12 @@ describe('CI dist build contract', () => {
     expect(packagingSource).toContain("process.platform === 'win32' ? `${binName}.cmd` : binName");
     expect(packagingSource).toContain('function planPackedBinInvocation(');
     expect(packagingSource).toContain('async function runPackedBin(');
-    expect(packagingSource).toContain("process.env.ComSpec ?? process.env.COMSPEC ?? 'cmd.exe'");
+    expect(packagingSource).toContain('const env = options?.env ?? process.env;');
+    expect(packagingSource).toContain("const comSpec = env.ComSpec ?? env.COMSPEC ?? 'cmd.exe';");
     expect(packagingSource).toContain("'/d', '/s', '/c'");
+    expect(packagingSource).toContain('`"${commandPayload}"`');
+    expect(packagingSource).toContain('windowsVerbatimArguments: true');
+    expect(packagingSource).toContain('planPackedBinInvocation(binPath, args, { env: options.env })');
     expect(packagingSource).toContain('readdir(sandbox, { recursive: true })');
     expect(packagingSource).not.toMatch(/\bexecFileAsync\(\s*binPath\b/);
     expect(packagingSource).not.toMatch(/\bexecFileAsync\(\s*['"]find['"]/);

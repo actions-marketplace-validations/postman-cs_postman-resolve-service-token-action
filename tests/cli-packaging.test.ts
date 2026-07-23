@@ -45,6 +45,11 @@ function assertSafeCmdToken(value: string, label: string): void {
   }
 }
 
+function quoteCmdArg(value: string): string {
+  assertSafeCmdToken(value, 'cmd arg');
+  return `"${value}"`;
+}
+
 /**
  * Cross-platform plan for invoking an npm-packed bin.
  * POSIX: execFile the executable directly.
@@ -78,13 +83,14 @@ function planPackedBinInvocation(
     throw new Error(`packed-bin args must be exactly --help or --version; got ${JSON.stringify(args)}`);
   }
 
-  // Injected env supports Linux-runnable win32 plan tests; otherwise process.env.
-  const comSpec =
-    options?.env?.ComSpec ?? options?.env?.COMSPEC ?? process.env.ComSpec ?? process.env.COMSPEC ?? 'cmd.exe';
-  const command = [`"${binPath}"`, ...args].join(' ');
+  // Selected env only: explicit `{}` must not leak ambient ComSpec/COMSPEC.
+  const env = options?.env ?? process.env;
+  const comSpec = env.ComSpec ?? env.COMSPEC ?? 'cmd.exe';
+  // AWS-proven shape: quote shim + fixed arg, then wrap the full payload for `/d /s /c`.
+  const commandPayload = [quoteCmdArg(binPath), ...args.map((arg) => quoteCmdArg(arg))].join(' ');
   return {
     file: comSpec,
-    args: ['/d', '/s', '/c', command]
+    args: ['/d', '/s', '/c', `"${commandPayload}"`]
   };
 }
 
@@ -93,13 +99,14 @@ async function runPackedBin(
   args: readonly string[],
   options: { cwd: string; env: NodeJS.ProcessEnv }
 ): Promise<{ stdout: string; stderr: string }> {
-  const plan = planPackedBinInvocation(binPath, args);
+  const plan = planPackedBinInvocation(binPath, args, { env: options.env });
   return execFileAsync(plan.file, [...plan.args], {
     cwd: options.cwd,
     encoding: 'utf8',
     env: options.env,
     timeout: PACKED_BIN_TIMEOUT_MS,
-    maxBuffer: PACKED_BIN_MAX_BUFFER
+    maxBuffer: PACKED_BIN_MAX_BUFFER,
+    ...(process.platform === 'win32' ? { windowsVerbatimArguments: true } : {})
   });
 }
 
@@ -125,21 +132,21 @@ describe('packed-bin invocation plan', () => {
     });
     expect(viaComSpec.file).toBe('C:\\Windows\\System32\\cmd.exe');
     expect(viaComSpec.file.toLowerCase()).not.toMatch(/\.cmd$/);
-    expect(viaComSpec.args).toEqual(['/d', '/s', '/c', `"${packedBinPath}" --help`]);
+    expect(viaComSpec.args).toEqual(['/d', '/s', '/c', `""${packedBinPath}" "--help""`]);
 
     const viaComspecEnv = planPackedBinInvocation(packedBinPath, ['--version'], {
       platform: 'win32',
       env: { COMSPEC: 'D:\\custom\\cmd.exe' }
     });
     expect(viaComspecEnv.file).toBe('D:\\custom\\cmd.exe');
-    expect(viaComspecEnv.args).toEqual(['/d', '/s', '/c', `"${packedBinPath}" --version`]);
+    expect(viaComspecEnv.args).toEqual(['/d', '/s', '/c', `""${packedBinPath}" "--version""`]);
 
     const fallback = planPackedBinInvocation(packedBinPath, ['--help'], {
       platform: 'win32',
       env: {}
     });
     expect(fallback.file).toBe('cmd.exe');
-    expect(fallback.args[3]).toContain('"');
+    expect(fallback.args).toEqual(['/d', '/s', '/c', `""${packedBinPath}" "--help""`]);
     expect(fallback.args[3]).toContain('Program Files');
   });
 
@@ -149,8 +156,8 @@ describe('packed-bin invocation plan', () => {
       platform: 'win32',
       env: { ComSpec: 'cmd.exe' }
     });
-    expect(plan.args).toEqual(['/d', '/s', '/c', `"${packedBinPath}" --help`]);
-    expect(plan.args[3]).toMatch(/^".+" --help$/);
+    expect(plan.args).toEqual(['/d', '/s', '/c', `""${packedBinPath}" "--help""`]);
+    expect(plan.args[3]).toMatch(/^"".+" "--help""$/);
   });
 
   it('rejects cmd.exe metacharacters in win32 path and args before invoke', () => {
