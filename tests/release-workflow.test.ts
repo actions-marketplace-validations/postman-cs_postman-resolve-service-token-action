@@ -11,6 +11,21 @@ function job(name: string) {
 }
 
 describe('release workflow contract', () => {
+  it('cuts an annotated immutable tag containing dist without modifying main', () => {
+    const cut = job('cut');
+    expect(cut).toContain("if: ${{ github.event_name == 'workflow_dispatch' }}");
+    expect(cut).toContain('package.json');
+    expect(cut).toContain('npm run bundle');
+    expect(cut).toContain('node scripts/verify-dist-artifact.mjs');
+    expect(cut).toContain('git add -f dist');
+    expect(cut).toMatch(/git commit/);
+    expect(cut).toMatch(/git tag -a/);
+    expect(cut).toMatch(/git push[^\n]*refs\/tags\//);
+    expect(cut).not.toMatch(/git push[^\n]*(?:refs\/heads\/|\bmain\b)/);
+    expect(release).toContain('needs.cut.outputs.tag || github.ref_name');
+    expect(release).toContain('needs.cut.outputs.sha || github.sha');
+  });
+
   it('classifies with the policy helper before install and serializes immutable release work without cancellation', () => {
     expect(release).toContain('group: release-${{ github.repository }}');
     expect(release).toContain('cancel-in-progress: false');
@@ -24,7 +39,7 @@ describe('release workflow contract', () => {
     expect(classify.indexOf('actions/checkout@v7')).toBeLessThan(classify.indexOf('actions/setup-node@v7'));
     expect(classify.indexOf('actions/setup-node@v7')).toBeLessThan(classify.indexOf('release-policy.mjs classify'));
     expect(classify).not.toContain('npm ci');
-    expect(job('verify-package')).toContain("if: ${{ needs.classify.outputs.release_kind == 'immutable' }}");
+    expect(job('verify-package')).toContain("needs.classify.outputs.release_kind == 'immutable'");
     expect(job('publish')).toContain("needs.classify.outputs.release_kind == 'immutable' && needs.verify-package.result == 'success'");
     expect(job('advance-major-alias')).toContain("needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success'");
     expect(job('dispatch-live-monitor')).toContain("needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success'");
@@ -35,13 +50,12 @@ describe('release workflow contract', () => {
     const publish = job('publish');
     expect(verify).toContain('contents: read');
     expect(verify).not.toContain('id-token: write');
-    expect(verify).toContain('npm run bundle');
-    expect(verify.indexOf('npm run bundle')).toBeLessThan(verify.indexOf('Run gates'));
+    expect(verify).not.toContain('npm run bundle');
     expect(verify).toContain('MAX_PARALLEL_GATES=2');
     expect(verify).toContain('run lint npm run lint');
     expect(verify).toContain('run test npm test');
     expect(verify).toContain('run typecheck npm run typecheck');
-    expect(verify).toContain('run dist npm run verify:dist:assert');
+    expect(verify).toContain('run dist node scripts/verify-dist-artifact.mjs');
     expect(verify).toContain('run actionlint "$ACTIONLINT_BIN"');
     expect(verify).toContain('gate:$n=pass');
     expect(verify).toContain('gate:$n=fail');
@@ -106,6 +120,7 @@ describe('release workflow contract', () => {
     expect(alias).not.toContain('git for-each-ref');
     expect(alias).not.toContain('objectname:peel');
     expect(alias).not.toContain('git rev-parse');
+    expect(alias).not.toContain('git tag -fa "$MAJOR" "$GITHUB_SHA"');
     expect(alias).toContain('set -euo pipefail');
     expect(alias.indexOf('set -euo pipefail')).toBeLessThan(alias.indexOf('git ls-remote'));
     expect(alias).toContain('git ls-remote --tags origin "$MAJOR" "$MAJOR^{}" "$MAJOR.*"');

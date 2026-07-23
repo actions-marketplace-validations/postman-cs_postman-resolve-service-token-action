@@ -83,7 +83,7 @@ describe('CI dist build contract', () => {
     expect(runGates).toContain('run lint       npm run lint');
     expect(runGates).toContain('run test       npm test');
     expect(runGates).toContain('run typecheck  npm run typecheck');
-    expect(runGates).toContain('run dist       npm run verify:dist:assert');
+    expect(runGates).toContain('run dist       node scripts/verify-dist-artifact.mjs');
     expect(runGates).toContain('run actionlint "$ACTIONLINT_BIN"');
     expect(runGates).toContain('if [ "${{ github.event_name }}" = "pull_request" ]; then');
     expect(runGates).toContain('run commitlint npx commitlint \\');
@@ -92,7 +92,7 @@ describe('CI dist build contract', () => {
 
     expect(runGates).not.toContain('npm run build');
     expect(runGates).not.toContain('npm run bundle');
-    expect(runGates).not.toMatch(/npm run verify:dist(?:\s|$|"|')/);
+    expect(ciWorkflow).not.toContain('verify:dist');
     expect(runGates).not.toContain('npm publish');
     expect(runGates).not.toContain('action-gh-release');
     expect(runGates).not.toContain('git push');
@@ -101,12 +101,7 @@ describe('CI dist build contract', () => {
     expect(runGates).toContain('::group::$n');
     expect(runGates).toContain('exit $fail');
 
-    const upload = namedStep(linux, 'Upload expected dist on mismatch');
-    expect(upload.length).toBeGreaterThan(0);
-    expect(upload).toContain('if: failure()');
-    expect(upload).toContain('uses: actions/upload-artifact@v7');
-    expect(upload).toContain('name: expected-dist');
-    expect(upload).toContain('path: dist/');
+    expect(ciWorkflow).not.toContain('expected-dist');
   });
 
   it('pins actionlint 1.7.11 into RUNNER_TEMP and never installs Go across CI, release, and SEA', () => {

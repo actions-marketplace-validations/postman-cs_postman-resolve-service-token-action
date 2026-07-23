@@ -373,6 +373,16 @@ function assertGitIndexExec() {
     fail(`unable to read git index for ${CLI_REL}: ${error instanceof Error ? error.message : error}`);
   }
   if (!stage) {
+    // Dist-off-main worktrees intentionally keep generated artifacts ignored and untracked.
+    try {
+      execFileSync('git', ['check-ignore', '--quiet', '--', cliPathspec], {
+        cwd: git.toplevel,
+        stdio: 'ignore'
+      });
+      return;
+    } catch {
+      // Fall through to the existing untracked-file failure.
+    }
     fail(`${CLI_REL} is not tracked in the git index`);
   }
   const mode = stage.split(' ', 1)[0];

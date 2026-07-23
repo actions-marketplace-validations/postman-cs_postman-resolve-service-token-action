@@ -191,7 +191,7 @@ describe('packed-bin invocation plan', () => {
 });
 
 describe('CLI packaging contract', () => {
-  it('commits a Node shebang and git-index executable mode on dist/cli.cjs', async () => {
+  it('builds a Node shebang and executable mode on dist/cli.cjs', async () => {
     const cliPath = path.join(repoRoot, 'dist', 'cli.cjs');
     const contents = await readFile(cliPath, 'utf8');
     expect(contents.startsWith('#!/usr/bin/env node\n')).toBe(true);
@@ -202,11 +202,6 @@ describe('CLI packaging contract', () => {
       await access(cliPath, constants.X_OK);
     }
 
-    const staged = await execFileAsync('git', ['ls-files', '--stage', 'dist/cli.cjs'], {
-      cwd: repoRoot,
-      encoding: 'utf8'
-    });
-    expect(staged.stdout).toMatch(/^100755 /);
   });
 
   it('runs ./dist/cli.cjs --help and --version without credentials, network, or writes', async () => {
@@ -408,20 +403,8 @@ describe('CLI packaging contract', () => {
     }
   }, 60_000);
 
-  it('keeps an exact dist census of cli/index entrypoints', async () => {
+  it('keeps an exact on-disk dist census of cli/index entrypoints', async () => {
     const distDir = path.join(repoRoot, 'dist');
-    const entries = (
-      await execFileAsync('git', ['ls-files', '--', 'dist'], {
-        cwd: repoRoot,
-        encoding: 'utf8'
-      })
-    ).stdout
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .map((filePath) => path.basename(filePath))
-      .sort();
-    expect(entries).toEqual(['cli.cjs', 'index.cjs']);
-
     const onDisk = await readdir(distDir);
     expect(onDisk.slice().sort()).toEqual(['cli.cjs', 'index.cjs']);
   });
@@ -433,11 +416,10 @@ describe('CLI packaging contract', () => {
     // Build the banned rebuild token without embedding the contiguous literal in this file,
     // otherwise the self-scan would match the expectation source itself.
     const bannedRebuild = ['rm', '-rf', 'dist'].join(' ');
-    expect(scripts['verify:dist:assert']).toBe(
-      'git diff --ignore-space-at-eol --text --exit-code -- dist && node scripts/verify-dist-artifact.mjs'
-    );
-    expect(scripts['verify:dist']).toBe(
-      ['npm run', 'build', '&& npm run verify:dist:assert'].join(' ')
+    expect(scripts['verify:dist:assert']).toBeUndefined();
+    expect(scripts['verify:dist']).toBeUndefined();
+    expect(scripts['verify:bundle']).toBe(
+      ['npm run', 'bundle', '&& node scripts/verify-dist-artifact.mjs'].join(' ')
     );
     expect(packageJson).toMatch(/"bundle"/);
     expect(packagingSource).not.toMatch(/\bnpm run (?:build|bundle)\b/);

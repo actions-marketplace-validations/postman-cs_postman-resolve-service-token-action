@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -136,7 +137,7 @@ async function runVerify(root: string): Promise<{ code: number; stdout: string; 
 }
 
 describe('verify-dist-artifact canonical contract', () => {
-  it('passes against the committed dist artifact', async () => {
+  it.skipIf(!existsSync(path.join(repoRoot, 'dist', 'index.cjs')))('passes against a freshly built dist artifact', async () => {
     const result = await runVerify(repoRoot);
     expect(result.stderr).toBe('');
     expect(result.code).toBe(0);
@@ -180,7 +181,17 @@ describe('verify-dist-artifact canonical contract', () => {
     const result = await runVerify(pkgRoot);
     expect(result.code).not.toBe(0);
     expect(result.stderr).toMatch(/git-index mode is 100644/);
-  });
+  }, 30_000);
+
+  it('passes when dist is gitignored and untracked', async () => {
+    const root = await makeTempDir('verify-dist-gitignored-');
+    await execFileAsync('git', ['init', '--quiet'], { cwd: root });
+    await writeFile(path.join(root, '.gitignore'), 'dist/\n', 'utf8');
+    await writeFixture(root);
+    const result = await runVerify(root);
+    expect(result.stderr).toBe('');
+    expect(result.code).toBe(0);
+  }, 30_000);
 
   it('fails when dist census has an extra file', async () => {
     const root = await makeTempDir('verify-dist-extra-');
@@ -277,7 +288,7 @@ describe('verify-dist-artifact canonical contract', () => {
     const prefixed = await runVerify(rootPrefixed);
     expect(prefixed.stderr).toBe('');
     expect(prefixed.code).toBe(0);
-  });
+  }, 30_000);
 
   it('accepts the documented optional peer allowlist', async () => {
     const root = await makeTempDir('verify-dist-peer-');

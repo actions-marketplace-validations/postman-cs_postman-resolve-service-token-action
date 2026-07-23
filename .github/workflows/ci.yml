@@ -68,7 +68,7 @@ jobs:
           run lint       npm run lint
           run test       npm test
           run typecheck  npm run typecheck
-          run dist       npm run verify:dist:assert
+          run dist       node scripts/verify-dist-artifact.mjs
           run actionlint "$ACTIONLINT_BIN"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             run commitlint npx commitlint \
@@ -85,13 +85,6 @@ jobs:
             echo "::group::$n"; cat "$n.log"; echo "::endgroup::"
           done
           exit $fail
-      - name: Upload expected dist on mismatch
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: expected-dist
-          path: dist/
-
   windows:
     name: Windows gate
     runs-on: windows-latest

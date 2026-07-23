@@ -2,7 +2,7 @@
 
 ## Source of truth
 
-Git tags and GitHub releases are the public release identifiers for this action. `package.json` versions support npm packaging, but consumers should select action versions by Git tag. The committed `dist/` bundle is part of the released artifact because GitHub Actions runs it verbatim from the tag.
+Git tags and GitHub releases are the public release identifiers for this action. `package.json` versions support npm packaging, but consumers should select action versions by Git tag. `dist/` is gitignored build output and is never committed on branches or main. Release tags carry the bundle because GitHub Actions runs it verbatim from the tag.
 
 ## Tag policy
 
@@ -13,16 +13,14 @@ Git tags and GitHub releases are the public release identifiers for this action.
 
 ## Release checks
 
-Run the package validators from this directory before pushing an immutable tag:
+Cut an immutable release with the Release workflow's `workflow_dispatch` event and its `version` input. The workflow:
 
-1. Confirm the working tree is clean.
-2. `npm test`
-3. `npm run typecheck`
-4. `npm run lint`
-5. `npm run build`
-6. `npm run verify:dist:assert` after one build (do not rebuild again for verification)
-7. `npm run docs:tables` when `action.yml` changes, then confirm the `README.md` tables still match.
-8. Confirm `SECURITY.md`, `SUPPORT.md`, and this file still describe the release surface.
+1. Checks out the reviewed main SHA and runs `npm ci`, `npm run bundle`, and the package gates.
+2. Commits `dist/` onto a tag-only commit whose parent is that main SHA; main remains untouched.
+3. Creates annotated tag `v<version>` on that commit and pushes only the tag.
+4. Checks out the tag in downstream jobs, verifies the committed bundle without rebuilding, publishes npm with provenance, and advances the rolling `v1` alias.
+
+The parent relationship is the audit link to reviewed source. The release bytes reproduce with `npm ci && npm run bundle` at the tag commit's parent. A bare tag without committed `dist/` fails artifact verification.
 
 ## npm package
 

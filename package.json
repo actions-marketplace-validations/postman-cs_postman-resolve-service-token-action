@@ -12,12 +12,10 @@
     "dist"
   ],
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks",
     "bundle": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && esbuild src/main.ts --bundle --platform=node --target=node24 --format=cjs --define:__SEA_VERSION__=undefined --outfile=dist/index.cjs && esbuild src/cli.ts --bundle --platform=node --target=node24 --format=cjs --define:__SEA_VERSION__=undefined --banner:js=\"#!/usr/bin/env node\" --outfile=dist/cli.cjs && node -e \"if(process.platform!=='win32')require('node:fs').chmodSync('dist/cli.cjs',0o755)\"",
     "build": "npm run typecheck && npm run bundle",
     "build:sea": "bash scripts/build-sea.sh",
-    "verify:dist:assert": "git diff --ignore-space-at-eol --text --exit-code -- dist && node scripts/verify-dist-artifact.mjs",
-    "verify:dist": "npm run build && npm run verify:dist:assert",
+    "verify:bundle": "npm run bundle && node scripts/verify-dist-artifact.mjs",
     "docs:tables": "node scripts/render-action-tables.mjs --write",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

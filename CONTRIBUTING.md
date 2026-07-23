@@ -7,7 +7,7 @@ Thank you for your interest in contributing. This guide covers the workflow and 
 1. Fork and clone the repository.
 2. Create a feature branch: `git checkout -b my-change`.
 
-This repository is a Node.js GitHub Action and npm CLI. Runtime code lives in `src/`, tests live in `tests/`, and bundled artifacts live in `dist/`.
+This repository is a Node.js GitHub Action and npm CLI. Runtime code lives in `src/`; tests live in `tests/`. `dist/` is gitignored build output and is never committed on branches.
 
 ## Local Validation
 
@@ -18,8 +18,7 @@ npm ci
 npm run lint
 npm test
 npm run typecheck
-npm run build
-npm run verify:dist
+npm run verify:bundle
 ```
 
 Then lint workflows with [`actionlint`](https://github.com/rhysd/actionlint):
@@ -34,11 +33,13 @@ $(go env GOPATH)/bin/actionlint
 ## Before Submitting a PR
 
 - [ ] `actionlint` passes locally.
-- [ ] `npm run lint`, `npm test`, `npm run typecheck`, and `npm run verify:dist` pass locally.
+- [ ] `npm run lint`, `npm test`, `npm run typecheck`, and `npm run verify:bundle` pass locally.
 - [ ] The offline `gate` check passes.
 - [ ] Changes are focused and address a single concern.
 - [ ] README inputs/outputs tables match `action.yml`.
 - [ ] Behavior changes are reflected in `README.md`.
+
+Edit `src/` and push the source change. Do not rebuild or stage `dist/`; CI builds it fresh and validates its runtime shape with `scripts/verify-dist-artifact.mjs`. This keeps bundle bytes and merge conflicts out of contributor branches, including Dependabot PRs.
 
 ## Live E2E Tier
 

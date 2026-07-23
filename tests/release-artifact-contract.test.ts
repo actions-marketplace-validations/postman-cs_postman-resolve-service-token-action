@@ -52,7 +52,7 @@ function stageReleaseDirectory(packageVersion = '2.0.4') {
 function extractInlineVerifier() {
   const releaseWorkflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8');
   const match = releaseWorkflow.match(
-    /name: Verify checksummed release artifacts\n\s+run: \|\n\s+node --input-type=module - <<'NODE'\n([\s\S]*?)\n\s+NODE/
+    /name: Verify checksummed release artifacts\n(?:[\s\S]*?)run: \|\n\s+node --input-type=module - <<'NODE'\n([\s\S]*?)\n\s+NODE/
   );
   expect(match?.[1]).toBeTruthy();
   const scriptDir = mkdtempSync(join(tmpdir(), 'inline-verify-'));

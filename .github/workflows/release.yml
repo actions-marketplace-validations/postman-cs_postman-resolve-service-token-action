@@ -4,6 +4,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (for example, 2.1.0)
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -13,7 +18,56 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  cut:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Validate release version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$INPUT_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "::error::input version $INPUT_VERSION does not match package.json version $PACKAGE_VERSION"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$INPUT_VERSION" >/dev/null 2>&1; then
+            echo "::error::tag v$INPUT_VERSION already exists on origin"
+            exit 1
+          fi
+      - run: npm run bundle
+      - run: node scripts/verify-dist-artifact.mjs
+      - name: Create and push release tag
+        id: release
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -f dist
+          git commit -m "build: dist for v$INPUT_VERSION"
+          git tag -a "v$INPUT_VERSION" -m "Release v$INPUT_VERSION"
+          echo "tag=v$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git push origin "refs/tags/v$INPUT_VERSION"
+
   classify:
+    needs: [cut]
+    if: ${{ always() && (github.event_name == 'push' || needs.cut.result == 'success') }}
     runs-on: ubuntu-latest
     outputs:
       release_kind: ${{ steps.release_tag.outputs.release_kind }}
@@ -21,21 +75,27 @@ jobs:
       npm_publish: ${{ steps.release_tag.outputs.npm_publish }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.cut.outputs.tag || github.ref }}
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Verify release tag classification
         id: release_tag
+        env:
+          GITHUB_REF_NAME: ${{ needs.cut.outputs.tag || github.ref_name }}
         run: node scripts/release-policy.mjs classify
 
   verify-package:
-    needs: classify
-    if: ${{ needs.classify.outputs.release_kind == 'immutable' }}
+    needs: [cut, classify]
+    if: ${{ always() && needs.classify.outputs.release_kind == 'immutable' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.cut.outputs.tag || github.ref }}
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -46,7 +106,7 @@ jobs:
         run: |
           bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.11 "$RUNNER_TEMP"
           echo "ACTIONLINT_BIN=$RUNNER_TEMP/actionlint" >> "$GITHUB_ENV"
-      - run: npm run bundle
+      - run: node scripts/verify-dist-artifact.mjs
       - name: Run gates
         run: |
           set -uo pipefail
@@ -56,11 +116,14 @@ jobs:
           run lint npm run lint
           run test npm test
           run typecheck npm run typecheck
-          run dist npm run verify:dist:assert
+          run dist node scripts/verify-dist-artifact.mjs
           run actionlint "$ACTIONLINT_BIN"
           while [ "${#pid[@]}" -gt 0 ]; do finish_one; done
           fail=0; for n in "${names[@]}"; do if [ "${result[$n]}" -eq 0 ]; then echo "gate:$n=pass"; else echo "gate:$n=fail"; fail=1; fi; cat "$n.log"; done; exit $fail
       - name: Package release bytes
+        env:
+          GITHUB_SHA: ${{ needs.cut.outputs.sha || github.sha }}
+          GITHUB_REF_NAME: ${{ needs.cut.outputs.tag || github.ref_name }}
         run: |
           mkdir release-stage
           npm pack --pack-destination release-stage
@@ -104,8 +167,8 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [classify, verify-package]
-    if: ${{ needs.classify.outputs.release_kind == 'immutable' && needs.verify-package.result == 'success' }}
+    needs: [cut, classify, verify-package]
+    if: ${{ always() && needs.classify.outputs.release_kind == 'immutable' && needs.verify-package.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -120,6 +183,9 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
       - name: Verify checksummed release artifacts
+        env:
+          GITHUB_SHA: ${{ needs.cut.outputs.sha || github.sha }}
+          GITHUB_REF_NAME: ${{ needs.cut.outputs.tag || github.ref_name }}
         run: |
           node --input-type=module - <<'NODE'
           import { createHash } from 'node:crypto';
@@ -173,6 +239,7 @@ jobs:
           fi
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
+          tag_name: ${{ needs.cut.outputs.tag || github.ref_name }}
           generate_release_notes: true
           files: |
             release.tgz
@@ -181,14 +248,19 @@ jobs:
             release-manifest.json
 
   advance-major-alias:
-    needs: [classify, publish]
-    if: ${{ needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' }}
+    needs: [cut, classify, publish]
+    if: ${{ always() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.cut.outputs.tag || github.ref }}
       - name: Advance rolling major alias without regression
+        env:
+          GITHUB_REF_NAME: ${{ needs.cut.outputs.tag || github.ref_name }}
+          RELEASE_SHA: ${{ needs.cut.outputs.sha || github.sha }}
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
@@ -203,7 +275,7 @@ jobs:
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git tag -fa "$MAJOR" -m "Rolling $MAJOR alias -> v$CANDIDATE" "$GITHUB_SHA"
+          git tag -fa "$MAJOR" -m "Rolling $MAJOR alias -> v$CANDIDATE" "$RELEASE_SHA"
           git push origin "$MAJOR" --force
 
   dispatch-live-monitor:

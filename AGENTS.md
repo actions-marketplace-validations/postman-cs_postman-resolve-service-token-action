@@ -16,9 +16,8 @@ tests/
 ## Commands
 
 ```bash
-npm ci && npm test && npm run typecheck && npm run build
-npm run verify:dist         # rebuild + git diff + artifact assert
-npm run verify:dist:assert  # read-only dist contract (CI after one build)
+npm ci && npm test && npm run typecheck && npm run lint
+npm run verify:bundle  # build + runtime-shape check
 ```
 
 ## Key Behaviors
@@ -31,12 +30,12 @@ npm run verify:dist:assert  # read-only dist contract (CI after one build)
 ## Gotchas
 
 - `main.ts` holds real token-exchange logic; `index.ts` = Action shell, `cli.ts` = non-GitHub adapter. Wire any pre-output logic into both entries.
-- esbuild bundles `--target=node24`; `dist/` part of release integrity, verified by `verify:dist`/`verify:dist:assert` (CI + pre-push hook).
-- `dist/cli.cjs` must stay executable in git index (`100755`); `npm run bundle` chmods it.
+- esbuild bundles `--target=node24`; `dist/` is gitignored build output and is never committed on branches. `npm run bundle` chmods `dist/cli.cjs` executable.
+- Release tags carry `dist/` on tag-only commit parented on reviewed main SHA; main never carries bundled bytes.
 
 ## CI
 
-`.github/workflows/ci.yml` runs one `gate` job. Bundles once, queues at most two checks on one runner. Typecheck once. Dist read-only `verify:dist:assert`; no pack race. Every check prints `::group::` result even on failure.
+`.github/workflows/ci.yml` runs one `gate` job. It builds fresh, validates runtime shape with `scripts/verify-dist-artifact.mjs`, and queues checks on one runner. Every check prints `::group::` result even on failure.
 
 See workspace-root `../../docs/CI.md` for shared rationale.
 
