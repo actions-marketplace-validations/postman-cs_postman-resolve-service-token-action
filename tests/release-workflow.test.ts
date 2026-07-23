@@ -40,9 +40,40 @@ describe('release workflow contract', () => {
     expect(classify.indexOf('actions/setup-node@v7')).toBeLessThan(classify.indexOf('release-policy.mjs classify'));
     expect(classify).not.toContain('npm ci');
     expect(job('verify-package')).toContain("needs.classify.outputs.release_kind == 'immutable'");
-    expect(job('publish')).toContain("needs.classify.outputs.release_kind == 'immutable' && needs.verify-package.result == 'success'");
+    expect(job('verify-package-windows')).toContain("needs.classify.outputs.release_kind == 'immutable'");
+    expect(job('publish')).toContain(
+      "needs.classify.outputs.release_kind == 'immutable' && needs.verify-package.result == 'success' && needs.verify-package-windows.result == 'success'"
+    );
     expect(job('advance-major-alias')).toContain("needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success'");
     expect(job('dispatch-live-monitor')).toContain("needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success'");
+  });
+
+  it('consumes tagged dist on Windows without rebuild before publish', () => {
+    const win = job('verify-package-windows');
+    const publish = job('publish');
+    expect(win).toContain('runs-on: windows-latest');
+    expect(win).toContain('needs: [cut, classify]');
+    expect(win).toContain('ref: ${{ needs.cut.outputs.tag || github.ref }}');
+    expect(win).toContain('id: windows-node-modules');
+    expect(win).toContain(
+      'uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0'
+    );
+    expect(win).toContain("key: Windows/node-24/exact-${{ hashFiles('package-lock.json') }}");
+    expect(win).not.toContain('restore-keys');
+    expect(win).toContain('npm ci --prefer-offline --no-audit --no-fund');
+    expect(win).not.toContain('npm run bundle');
+    expect(win).not.toContain('npm run build');
+    expect(win).toContain('node scripts/assert-release-dist-untouched.mjs');
+    expect(win.match(/node scripts\/assert-release-dist-untouched\.mjs/g) ?? []).toHaveLength(2);
+    expect(win).toContain('- run: node --run test');
+    const guardNeedle = 'node scripts/assert-release-dist-untouched.mjs';
+    const firstGuard = win.indexOf(guardNeedle);
+    const secondGuard = win.indexOf(guardNeedle, firstGuard + 1);
+    const testIdx = win.indexOf('- run: node --run test');
+    expect(firstGuard).toBeLessThan(testIdx);
+    expect(secondGuard).toBeGreaterThan(testIdx);
+    expect(publish).toContain('needs: [cut, classify, verify-package, verify-package-windows]');
+    expect(publish).toContain("needs.verify-package-windows.result == 'success'");
   });
 
   it('uses unprivileged artifact construction and artifact-only privileged publication', () => {

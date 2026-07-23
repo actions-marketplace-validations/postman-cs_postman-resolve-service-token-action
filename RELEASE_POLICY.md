@@ -18,7 +18,8 @@ Cut an immutable release with the Release workflow's `workflow_dispatch` event a
 1. Checks out the reviewed main SHA and runs `npm ci`, `npm run bundle`, and the package gates.
 2. Commits `dist/` onto a tag-only commit whose parent is that main SHA; main remains untouched.
 3. Creates annotated tag `v<version>` on that commit and pushes only the tag.
-4. Checks out the tag in downstream jobs, verifies the committed bundle without rebuilding, publishes npm with provenance, and advances the rolling `v1` alias.
+4. Checks out the tag in `verify-package` (ubuntu) and `verify-package-windows` (windows-latest); both consume committed tag bytes with no rebuild. Windows asserts dist present and untouched before and after `node --run test`.
+5. Publish runs only when both verify jobs succeed, then publishes npm with provenance and advances the rolling `v1` alias.
 
 The parent relationship is the audit link to reviewed source. The release bytes reproduce with `npm ci && npm run bundle` at the tag commit's parent. A bare tag without committed `dist/` fails artifact verification.
 

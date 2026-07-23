@@ -35,7 +35,12 @@ npm run verify:bundle  # build + runtime-shape check
 
 ## CI
 
-`.github/workflows/ci.yml` runs one `gate` job. It builds fresh, validates runtime shape with `scripts/verify-dist-artifact.mjs`, and queues checks on one runner. Every check prints `::group::` result even on failure.
+`.github/workflows/ci.yml` runs two required peer jobs (no `needs:`):
+
+- **gate** (ubuntu): `npm run bundle` once, then parallel lint/test/typecheck/`node scripts/verify-dist-artifact.mjs`/actionlint/(PR)commitlint.
+- **windows**: rebuilds `dist/` once (dist-off-main scaffolding), then `node --run test` for OS runtime (`.cmd`, spawn, path).
+
+Release `verify-package-windows` checks out tag and runs suite against committed tag bytes with **no** rebuild; publish needs both Ubuntu and Windows verify jobs.
 
 See workspace-root `../../docs/CI.md` for shared rationale.
 

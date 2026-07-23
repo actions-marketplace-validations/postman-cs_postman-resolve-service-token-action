@@ -104,4 +104,4 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: npm run bundle
-      - run: npm test
+      - run: node --run test

@@ -155,16 +155,15 @@ describe('CI dist build contract', () => {
 
     const cacheIdx = windows.indexOf('id: windows-node-modules');
     const missInstallIdx = windows.indexOf('npm ci --prefer-offline --no-audit --no-fund');
-    const testIdx = windows.indexOf('- run: npm test');
+    const testIdx = windows.indexOf('- run: node --run test');
     expect(cacheIdx).toBeGreaterThanOrEqual(0);
     expect(missInstallIdx).toBeGreaterThan(cacheIdx);
     expect(testIdx).toBeGreaterThan(missInstallIdx);
   });
 
-  it('runs sole direct unconditional npm test on Windows with no queue or platform-neutral gates', () => {
-    expect(windows.match(/^\s*- run: npm test\s*$/gm) ?? []).toHaveLength(1);
-    expect(windows).not.toMatch(/npm test --/);
-    expect(windows).not.toMatch(/npm test -/);
+  it('runs sole direct unconditional node test on Windows with no queue or platform-neutral gates', () => {
+    expect(windows.match(/^\s*- run: node --run test\s*$/gm) ?? []).toHaveLength(1);
+    expect(windows.match(/^\s*- run: npm test\s*$/gm) ?? []).toHaveLength(0);
 
     expect(windows).not.toContain('Run Windows gates');
     expect(windows).not.toContain('name: Run gates');
@@ -176,9 +175,11 @@ describe('CI dist build contract', () => {
     expect(windows).not.toContain('Receive-Job');
     expect(windows).not.toMatch(/@\{ Name = '/);
 
-    // dist is not committed; Windows must build it exactly once before tests.
+    // dist-off-main: Windows rebuilds once for OS-runtime suite; release consumes tag bytes.
     expect(windows.match(/^\s*- run: npm run bundle\s*$/gm) ?? []).toHaveLength(1);
-    expect(windows.indexOf('- run: npm run bundle')).toBeLessThan(windows.indexOf('- run: npm test'));
+    expect(windows.indexOf('- run: npm run bundle')).toBeLessThan(
+      windows.indexOf('- run: node --run test')
+    );
     expect(windows).not.toContain('npm run build');
     expect(windows).not.toContain('npm run lint');
     expect(windows).not.toContain('npm run typecheck');
