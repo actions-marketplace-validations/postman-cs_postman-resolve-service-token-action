@@ -42,26 +42,23 @@ $(go env GOPATH)/bin/actionlint
 
 ## Live E2E Tier
 
-Ordinary PRs use the deterministic offline `ci.yml` gate. Live sandbox coverage
-is an asynchronous exact-tag smoke monitor after immutable publication, plus the
-nightly full monitor in `postman-cs/postman-actions-e2e`.
+Ordinary PRs use the deterministic offline gate. Live sandbox coverage runs on
+immutable releases and nightly in `postman-cs/postman-actions-e2e`.
 
 ## Release Gate
 
-Immutable release tags for this repo publish after local validate succeeds
-(deterministic tests, typecheck, dist verify, actionlint, and tag/version
-checks). After immutable publication, the release workflow's
-`dispatch-live-monitor` job dispatches an asynchronous smoke E2E monitor in
-`postman-cs/postman-actions-e2e` with this exact tag pinned for
-`postman-resolve-service-token-action`. That dispatch is `continue-on-error`;
-missing/denied dispatch or a later monitor failure does not roll back, block, or
-fail publication.
+Immutable release tags for this repo are blocked by the central live e2e suite in
+`postman-cs/postman-actions-e2e` before any GitHub release, npm package, or
+release tarball is published. The release workflow validates locally, dispatches
+the e2e workflow with this exact tag pinned for
+`postman-resolve-service-token-action`, waits for the correlated run to succeed,
+and only then publishes.
 
-The rolling `v1` alias validates locally but skips npm publish and the live e2e
-monitor dispatch. `E2E_DISPATCH_TOKEN` powers the post-publish smoke monitor for
-immutable publishing tags; record the dispatch notice from the release logs as
-monitor evidence. The nightly full monitor remains in
-`postman-cs/postman-actions-e2e`.
+The rolling `v1` alias validates locally but skips npm publish
+and the live e2e gate. `E2E_DISPATCH_TOKEN` is release-critical for immutable
+publishing tags; if it is missing, invalid, or the e2e fails/times out, the
+release must stop before public artifacts are created. Record the e2e run URL
+and conclusion from the release logs as release evidence.
 
 ## Commit Messages
 
@@ -83,7 +80,7 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/en/
 feat: add postman-team-id passthrough input
 fix: handle 429 from /service-account-tokens
 docs: clarify github-token PAT requirement
-ci: dispatch post-release smoke monitor asynchronously
+ci: pin actionlint to v1.7.11
 ```
 
 ## Reporting Issues

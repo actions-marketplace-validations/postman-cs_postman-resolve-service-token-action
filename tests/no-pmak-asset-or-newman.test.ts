@@ -20,7 +20,8 @@ type PatternId = 'newman' | 'pmak-header' | 'pmak-cli-login';
  * cannot run Collection v3, so only the Postman CLI (`postman collection run`) is allowed.
  */
 const ALLOWLIST: Record<string, PatternId[]> = {
-  'src/index.ts': ['pmak-header']
+  'src/index.ts': ['pmak-header'],
+  'src/pmak-diagnostics.ts': ['pmak-header']
 };
 
 type Violation = { file: string; line: number; pattern: PatternId; text: string };

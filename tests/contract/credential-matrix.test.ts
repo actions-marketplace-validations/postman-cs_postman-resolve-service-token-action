@@ -190,7 +190,9 @@ describe('contract: resolve-service-token credential matrix', () => {
     expect(thrown).toBeInstanceOf(Error);
     const message = thrown instanceof Error ? thrown.message : String(thrown);
     // The raw HTTP 400 is rewritten into actionable enable-service-accounts advice.
+    expect(message).toContain('POST https://api.getpostman.com/service-account-tokens');
     expect(message).toContain('Service accounts are not enabled');
+    expect(message).toContain('Team Settings');
     expect(message).not.toContain('pmak-contract');
   });
 
@@ -204,6 +206,6 @@ describe('contract: resolve-service-token credential matrix', () => {
         fetcher: platform.fetcher,
         execFile: failingExec
       })
-    ).rejects.toThrow(/Could not read team id from \/me response/);
+    ).rejects.toThrow(/GET https:\/\/api\.getpostman\.com\/me \(resolve team identity\) response did not include a team id/);
   });
 });

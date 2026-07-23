@@ -4252,7 +4252,7 @@ var require_webidl = __commonJS({
   "node_modules/undici/lib/web/webidl/index.js"(exports2, module2) {
     "use strict";
     var assert = require("node:assert");
-    var { types, inspect } = require("node:util");
+    var { types, inspect: inspect2 } = require("node:util");
     var { markAsUncloneable } = require("node:worker_threads");
     var UNDEFINED = 1;
     var BOOLEAN = 2;
@@ -4443,7 +4443,7 @@ var require_webidl = __commonJS({
         case SYMBOL:
           return `Symbol(${V.description})`;
         case OBJECT:
-          return inspect(V);
+          return inspect2(V);
         case STRING:
           return `"${V}"`;
         case BIGINT:
@@ -26542,12 +26542,111 @@ function createTelemetryContext(options) {
 var import_node_fs = require("node:fs");
 var import_node_path = require("node:path");
 function resolveActionVersion2() {
+  if (false) {
+    return void 0;
+  }
   try {
     const raw = (0, import_node_fs.readFileSync)((0, import_node_path.join)(__dirname, "..", "package.json"), "utf8");
     return JSON.parse(raw).version ?? "unknown";
   } catch {
     return "unknown";
   }
+}
+
+// src/pmak-diagnostics.ts
+var memo = /* @__PURE__ */ new Map();
+var CONTROL_CHARS = new RegExp(
+  `[${Array.from({ length: 32 }, (_, index) => `\\u${index.toString(16).padStart(4, "0")}`).join("")}\\u007f${Array.from({ length: 32 }, (_, index) => `\\u${(128 + index).toString(16).padStart(4, "0")}`).join("")}]`,
+  "g"
+);
+function asRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function normalizedBaseUrl(apiBaseUrl) {
+  return new URL(apiBaseUrl.trim()).toString().replace(/\/+$/, "");
+}
+function isBlank(value) {
+  return value === null || value === "";
+}
+function timeoutError() {
+  return new Error("PMAK identity diagnosis timed out");
+}
+function raceAbort(promise, signal) {
+  if (signal.aborted) return Promise.reject(timeoutError());
+  return Promise.race([
+    promise,
+    new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(timeoutError()), { once: true });
+    })
+  ]);
+}
+async function inspect(options, baseUrl) {
+  const timeoutMs = options.timeoutMs ?? 2e3;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+  const fetchImpl = options.fetchImpl ?? ((url, init) => fetch(url, init));
+  let response;
+  try {
+    response = await raceAbort(fetchImpl(`${baseUrl}/me`, {
+      headers: { "x-api-key": options.apiKey },
+      signal
+    }), signal);
+  } catch {
+    return { kind: "inconclusive" };
+  }
+  if (response.status === 401 || response.status === 403) {
+    return { kind: "invalid", status: response.status };
+  }
+  if (!response.ok) return { kind: "inconclusive", status: response.status };
+  let payload;
+  try {
+    payload = await raceAbort(response.text(), signal).then((body2) => JSON.parse(body2));
+  } catch {
+    return { kind: "inconclusive", status: response.status };
+  }
+  const body = asRecord(payload);
+  const user = asRecord(body?.user);
+  if (!body || !user) return { kind: "inconclusive", status: response.status };
+  if (typeof user.username === "string" && user.username.trim() || typeof user.email === "string" && user.email.trim()) {
+    return { kind: "personal", status: response.status, payload: body };
+  }
+  if (Object.hasOwn(user, "username") && Object.hasOwn(user, "email") && isBlank(user.username) && isBlank(user.email)) {
+    return { kind: "service-account", status: response.status, payload: body };
+  }
+  return { kind: "inconclusive", status: response.status };
+}
+function maskPmakDiagnostic(message, secrets) {
+  let masked = message;
+  for (const secret of secrets) {
+    if (secret) masked = masked.split(secret).join("***");
+  }
+  return masked.replace(CONTROL_CHARS, " ").replace(/\s+/g, " ").trim();
+}
+function formatRejectedMint(originalMintError, result) {
+  switch (result.kind) {
+    case "personal":
+      return `${originalMintError} Personal API key detected, cannot mint a service-account access token.`;
+    case "service-account":
+      return `${originalMintError} postman-api-key authenticates (GET /me OK) but was rejected by POST /service-account-tokens and lacks permission to mint access tokens.`;
+    case "invalid":
+      return `${originalMintError} postman-api-key is invalid, disabled, or expired.`;
+    case "inconclusive":
+      return originalMintError;
+  }
+}
+function inspectPmakIdentity(options) {
+  const baseUrl = normalizedBaseUrl(options.apiBaseUrl);
+  const key = `${baseUrl}\0${options.apiKey}`;
+  const existing = memo.get(key);
+  if (existing) return existing;
+  const promise = inspect(options, baseUrl);
+  memo.set(key, promise);
+  if (options.mode === "preflight") {
+    void promise.then((result) => {
+      if (result.kind === "inconclusive" && memo.get(key) === promise) memo.delete(key);
+    });
+  }
+  return promise;
 }
 
 // src/index.ts
@@ -26578,10 +26677,10 @@ function resolvePostmanApiHost(stackInput, regionInput) {
   if (stack === "beta") return "https://api.getpostman-beta.com";
   throw new Error(`postman-stack must be one of: prod, beta; got: ${stack}`);
 }
-function readInputsFromAction(input) {
+function readInputsFromAction(input, env = process.env) {
   return {
-    postmanApiKey: normalizeOptional(input.getInput("postman-api-key")),
-    postmanAccessToken: normalizeOptional(input.getInput("postman-access-token")),
+    postmanApiKey: normalizeOptional(input.getInput("postman-api-key")) ?? normalizeOptional(env.POSTMAN_API_KEY),
+    postmanAccessToken: normalizeOptional(input.getInput("postman-access-token")) ?? normalizeOptional(env.POSTMAN_ACCESS_TOKEN),
     postmanTeamId: normalizeOptional(input.getInput("postman-team-id")),
     postmanRegion: normalizeOptional(input.getInput("postman-region")) ?? "us",
     postmanStack: normalizeOptional(input.getInput("postman-stack")) ?? "prod",
@@ -26593,26 +26692,82 @@ function readInputsFromAction(input) {
 }
 function readInputsFromEnv(env = process.env) {
   const getInput = (name) => env[`INPUT_${name.replace(/-/g, "_").toUpperCase()}`] ?? "";
-  return readInputsFromAction({ getInput });
+  return readInputsFromAction({ getInput }, env);
 }
 function createHeaders(entries) {
   return Object.fromEntries(
     Object.entries(entries).filter((entry) => Boolean(entry[1]))
   );
 }
-async function readResponseBody(response) {
-  try {
-    return await response.text();
-  } catch {
-    return "";
-  }
+var DIAGNOSTIC_DETAIL_MAX = 200;
+var DIAGNOSTIC_VALUE_MAX = 120;
+var EXEC_OUTPUT_CAP_BYTES = 8 * 1024;
+var EXEC_OUTPUT_TRUNCATION_MARKER = "...[truncated]";
+var ESC = String.fromCharCode(27);
+var BEL = String.fromCharCode(7);
+var ANSI_CSI = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, "g");
+var ANSI_OSC = new RegExp(`${ESC}\\][^${BEL}${ESC}]*(?:${BEL}|${ESC}\\\\)?`, "g");
+var ANSI_SHORT = new RegExp(`${ESC}[@-_]`, "g");
+var CONTROL_CHARS2 = new RegExp(
+  `[${Array.from({ length: 32 }, (_, i) => `\\u${i.toString(16).padStart(4, "0")}`).join("")}\\u007f${Array.from({ length: 32 }, (_, i) => `\\u${(128 + i).toString(16).padStart(4, "0")}`).join("")}]`,
+  "g"
+);
+function collapseToOneLine(value) {
+  return value.replace(ANSI_CSI, " ").replace(ANSI_OSC, " ").replace(ANSI_SHORT, " ").replace(CONTROL_CHARS2, " ").replace(/ +/g, " ").trim();
 }
-function parseJsonBody(body, context) {
-  try {
-    return body ? JSON.parse(body) : {};
-  } catch (error) {
-    throw new Error(`${context} returned non-JSON response`, { cause: error });
+function redactKnownSecrets(text, secrets) {
+  const values = secrets.map((entry) => entry?.trim()).filter((entry) => Boolean(entry && entry.length > 0)).sort((a, b) => b.length - a.length);
+  let result = text;
+  for (const secret of values) {
+    result = result.split(secret).join("[REDACTED]");
   }
+  return result;
+}
+function sanitizeDiagnosticDetail(value, secrets = [], maxLength = DIAGNOSTIC_DETAIL_MAX) {
+  let text;
+  if (value instanceof Error) {
+    text = value.message;
+  } else if (typeof value === "string") {
+    text = value;
+  } else if (value == null) {
+    return "";
+  } else {
+    text = String(value);
+  }
+  text = redactKnownSecrets(collapseToOneLine(text), secrets);
+  if (text.length > maxLength) {
+    return `${text.slice(0, maxLength)}...`;
+  }
+  return text;
+}
+function createBoundedOutputCollector(capBytes) {
+  const retained = [];
+  let retainedBytes = 0;
+  let truncated = false;
+  return {
+    onData(chunk) {
+      if (retainedBytes >= capBytes) {
+        truncated = true;
+        return;
+      }
+      const remaining = capBytes - retainedBytes;
+      if (chunk.length <= remaining) {
+        retained.push(chunk);
+        retainedBytes += chunk.length;
+        return;
+      }
+      retained.push(chunk.subarray(0, remaining));
+      retainedBytes = capBytes;
+      truncated = true;
+    },
+    finalize() {
+      const text = Buffer.concat(retained, retainedBytes).toString("utf8");
+      return truncated ? `${text}${EXEC_OUTPUT_TRUNCATION_MARKER}` : text;
+    }
+  };
+}
+function formatDiagnosticValue(value, maxLength = DIAGNOSTIC_VALUE_MAX) {
+  return sanitizeDiagnosticDetail(value ?? "", [], maxLength);
 }
 function getRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
@@ -26662,51 +26817,126 @@ function extractMeIdentity(payload) {
   const fullName = stringifyCandidate(readPath(payload, ["user", "fullName"])) ?? stringifyCandidate(readPath(payload, ["fullName"]));
   return { teamId, userId, fullName };
 }
-function formatHttpErrorBody(body) {
-  const trimmed = body.trim();
-  if (!trimmed) return "";
-  return `: ${trimmed}`;
-}
 async function mintServiceToken(inputs, apiHost, fetcher) {
-  const response = await fetcher(`${apiHost}/service-account-tokens`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": inputs.postmanApiKey ?? ""
-    },
-    body: JSON.stringify({ apiKey: inputs.postmanApiKey })
-  });
-  const body = await readResponseBody(response);
+  const endpoint = `${apiHost}/service-account-tokens`;
+  const secrets = [inputs.postmanApiKey, inputs.postmanAccessToken];
+  const remediation = "Verify the postman-api-key, team, stack, and region; retry; contact Postman support if the failure persists.";
+  let response;
+  try {
+    response = await fetcher(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": inputs.postmanApiKey ?? ""
+      },
+      body: JSON.stringify({ apiKey: inputs.postmanApiKey })
+    });
+  } catch (error) {
+    const cause = sanitizeDiagnosticDetail(error, secrets);
+    throw new Error(
+      `POST ${endpoint} (mint service-account token) failed: ${cause}. ${remediation}`,
+      { cause: error }
+    );
+  }
+  let body;
+  try {
+    body = await response.text();
+  } catch (error) {
+    const cause = sanitizeDiagnosticDetail(error, secrets);
+    throw new Error(
+      `POST ${endpoint} (mint service-account token) failed to read response body: ${cause}. ${remediation}`,
+      { cause: error }
+    );
+  }
   if (!response.ok) {
     const status = response.status;
     if (status === 401 || status === 403) {
-      throw new Error(`The postman-api-key was rejected (HTTP ${status}); confirm it is a valid, enabled PMAK for the intended team.`);
+      const original = `POST ${endpoint} (mint service-account token): The postman-api-key was rejected (HTTP ${status}); confirm it is a valid, enabled PMAK for the intended team.`;
+      const diagnostic = await inspectPmakIdentity({
+        apiBaseUrl: apiHost,
+        apiKey: inputs.postmanApiKey ?? "",
+        fetchImpl: fetcher
+      });
+      throw new Error(formatRejectedMint(maskPmakDiagnostic(original, secrets), diagnostic));
     }
     if (status === 400 && body.toLowerCase().includes("service accounts not enabled")) {
-      throw new Error("Service accounts are not enabled for this team; enable them in Team Settings or use a team where they are.");
+      throw new Error(
+        `POST ${endpoint} (mint service-account token): Service accounts are not enabled for this team (targeted by postman-api-key); enable them in Team Settings or use a team where they are.`
+      );
     }
-    throw new Error(`service-account-tokens failed (HTTP ${status})${formatHttpErrorBody(body)}`);
+    const detail = sanitizeDiagnosticDetail(body, secrets);
+    throw new Error(
+      `POST ${endpoint} (mint service-account token) failed (HTTP ${status})${detail ? `: ${detail}` : ""}. ${remediation}`
+    );
   }
-  const token = extractAccessToken(parseJsonBody(body, "service-account-tokens"));
+  let payload;
+  try {
+    payload = body ? JSON.parse(body) : {};
+  } catch (error) {
+    const cause = sanitizeDiagnosticDetail(error, secrets);
+    throw new Error(
+      `POST ${endpoint} (mint service-account token) returned malformed JSON: ${cause}. ${remediation}`,
+      { cause: error }
+    );
+  }
+  const token = extractAccessToken(payload);
   if (!token) {
-    throw new Error("Mint succeeded but no access token in response");
+    throw new Error(
+      `POST ${endpoint} (mint service-account token) succeeded but response contained no access token. ${remediation}`
+    );
   }
   return token;
 }
 async function resolveTeamIdAndIdentity(inputs, apiHost, token, fetcher) {
-  const response = await fetcher(`${apiHost}/me`, {
-    headers: createHeaders({
-      Authorization: `Bearer ${token}`,
-      "x-api-key": inputs.postmanApiKey
-    })
-  });
-  const body = await readResponseBody(response);
-  if (!response.ok) {
-    throw new Error(`/me failed (HTTP ${response.status})${formatHttpErrorBody(body)}`);
+  const endpoint = `${apiHost}/me`;
+  const secrets = [token, inputs.postmanApiKey, inputs.postmanAccessToken];
+  const remediation = "Verify the access token or postman-api-key, team, stack, and region, or supply a verified postman-team-id.";
+  let response;
+  try {
+    response = await fetcher(endpoint, {
+      headers: createHeaders({
+        Authorization: `Bearer ${token}`,
+        "x-api-key": inputs.postmanApiKey
+      })
+    });
+  } catch (error) {
+    const cause = sanitizeDiagnosticDetail(error, secrets);
+    throw new Error(
+      `GET ${endpoint} (resolve team identity) failed: ${cause}. ${remediation}`,
+      { cause: error }
+    );
   }
-  const identity = extractMeIdentity(parseJsonBody(body, "/me"));
+  let body;
+  try {
+    body = await response.text();
+  } catch (error) {
+    const cause = sanitizeDiagnosticDetail(error, secrets);
+    throw new Error(
+      `GET ${endpoint} (resolve team identity) failed to read response body: ${cause}. ${remediation}`,
+      { cause: error }
+    );
+  }
+  if (!response.ok) {
+    const detail = sanitizeDiagnosticDetail(body, secrets);
+    throw new Error(
+      `GET ${endpoint} (resolve team identity) failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}. ${remediation}`
+    );
+  }
+  let payload;
+  try {
+    payload = body ? JSON.parse(body) : {};
+  } catch (error) {
+    const cause = sanitizeDiagnosticDetail(error, secrets);
+    throw new Error(
+      `GET ${endpoint} (resolve team identity) returned malformed JSON: ${cause}. ${remediation}`,
+      { cause: error }
+    );
+  }
+  const identity = extractMeIdentity(payload);
   if (!identity.teamId) {
-    throw new Error("Could not read team id from /me response");
+    throw new Error(
+      `GET ${endpoint} (resolve team identity) response did not include a team id. ${remediation}`
+    );
   }
   return identity;
 }
@@ -26728,14 +26958,39 @@ async function writeGitHubSecrets(result, inputs, dependencies) {
   if (!inputs.githubToken) {
     throw new Error("github-token is required when write-github-secret is 'true'. The default GITHUB_TOKEN cannot write repo secrets; use a PAT or GitHub App installation token with secrets write permission.");
   }
+  const secrets = [inputs.githubToken, result.token, inputs.postmanApiKey, inputs.postmanAccessToken];
+  const repoLabel = formatDiagnosticValue(repository);
+  const accessSecretLabel = formatDiagnosticValue(inputs.accessTokenSecretName);
+  const teamSecretLabel = formatDiagnosticValue(inputs.teamIdSecretName);
+  const secretsWriteRemediation = "Ensure github-token has secrets-write permission for the repository, then retry.";
   try {
     await dependencies.execFile("gh", ["--version"]);
   } catch (error) {
-    throw new Error("gh CLI not found on runner. Use a runner image that includes gh (the default GitHub-hosted runners do), or install it before invoking this action.", { cause: error });
+    const cause = sanitizeDiagnosticDetail(error, secrets);
+    throw new Error(
+      `gh CLI not found on runner${cause ? ` (${cause})` : ""}. Use a runner image that includes gh (the default GitHub-hosted runners do), or install it before invoking this action.`,
+      { cause: error }
+    );
   }
-  await writeSecret(inputs.accessTokenSecretName, result.token, repository, inputs.githubToken, dependencies);
-  await writeSecret(inputs.teamIdSecretName, result.teamId, repository, inputs.githubToken, dependencies);
-  dependencies.core.info(`Wrote secrets: ${inputs.accessTokenSecretName}, ${inputs.teamIdSecretName}`);
+  try {
+    await writeSecret(inputs.accessTokenSecretName, result.token, repository, inputs.githubToken, dependencies);
+  } catch (error) {
+    const cause = sanitizeDiagnosticDetail(error, secrets);
+    throw new Error(
+      `Failed to write GitHub secret ${accessSecretLabel} to repository ${repoLabel}: ${cause}. ${secretsWriteRemediation}`,
+      { cause: error }
+    );
+  }
+  try {
+    await writeSecret(inputs.teamIdSecretName, result.teamId, repository, inputs.githubToken, dependencies);
+  } catch (error) {
+    const cause = sanitizeDiagnosticDetail(error, secrets);
+    throw new Error(
+      `Partial success: wrote GitHub secret ${accessSecretLabel} to repository ${repoLabel}, but failed to write ${teamSecretLabel}: ${cause}. Ensure github-token has secrets-write permission, retry the failed write, and reconcile or rotate the already-written ${accessSecretLabel} secret if needed.`,
+      { cause: error }
+    );
+  }
+  dependencies.core.info(`Wrote secrets: ${accessSecretLabel}, ${teamSecretLabel}`);
 }
 function validateInputs(inputs) {
   resolvePostmanApiHost(inputs.postmanStack, inputs.postmanRegion);
@@ -26778,14 +27033,15 @@ async function runResolveServiceTokenInner(inputs, dependencies, telemetry) {
   let teamId;
   if (inputs.postmanTeamId) {
     teamId = inputs.postmanTeamId;
-    dependencies.core.info("Using provided postman-team-id.");
+    dependencies.core.info(`Using provided postman-team-id ${formatDiagnosticValue(teamId)}.`);
   } else {
     const identity = await resolveTeamIdAndIdentity(inputs, apiHost, token, dependencies.fetcher);
     teamId = identity.teamId;
     if (!skipped) {
-      const userId = identity.userId ?? "unknown";
-      const fullName = identity.fullName ?? "unknown";
-      dependencies.core.info(`resolve-service-token: minted access token for team ${teamId} (user ${userId} ${fullName})`);
+      const userId = formatDiagnosticValue(identity.userId ?? "unknown");
+      const fullName = formatDiagnosticValue(identity.fullName ?? "unknown");
+      const teamLabel = formatDiagnosticValue(teamId);
+      dependencies.core.info(`resolve-service-token: minted access token for team ${teamLabel} (user ${userId} ${fullName})`);
     }
   }
   telemetry.setTeamId(teamId);
@@ -26804,8 +27060,8 @@ function createNodeExecFile(baseEnv = process.env) {
       env: options?.env ? { ...baseEnv, ...options.env } : baseEnv,
       stdio: ["pipe", "pipe", "pipe"]
     });
-    const stdoutChunks = [];
-    const stderrChunks = [];
+    const stdoutCollector = createBoundedOutputCollector(EXEC_OUTPUT_CAP_BYTES);
+    const stderrCollector = createBoundedOutputCollector(EXEC_OUTPUT_CAP_BYTES);
     let interruptedSignal;
     const cleanupSignalHandlers = () => {
       process.off("SIGINT", handleSignal);
@@ -26819,23 +27075,23 @@ function createNodeExecFile(baseEnv = process.env) {
     };
     process.once("SIGINT", handleSignal);
     process.once("SIGTERM", handleSignal);
-    child.stdout.on("data", (chunk) => stdoutChunks.push(chunk));
-    child.stderr.on("data", (chunk) => stderrChunks.push(chunk));
+    child.stdout.on("data", (chunk) => stdoutCollector.onData(chunk));
+    child.stderr.on("data", (chunk) => stderrCollector.onData(chunk));
     child.on("error", (error) => {
       cleanupSignalHandlers();
       reject(error);
     });
     child.on("close", (code) => {
       cleanupSignalHandlers();
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      const stdout = stdoutCollector.finalize();
+      const stderr = stderrCollector.finalize();
       if (interruptedSignal) {
         reject(new Error(`Command interrupted by ${interruptedSignal}: ${file} ${args.join(" ")}`));
         return;
       }
       if (code && code !== 0) {
-        reject(new Error(`Command failed with exit code ${code}: ${file} ${args.join(" ")}${stderr ? `
-${stderr}` : ""}`));
+        const detail = stderr || `${file} ${args.join(" ")}`;
+        reject(new Error(`Command failed with exit code ${code}: ${detail}`));
         return;
       }
       resolve({ stdout, stderr });

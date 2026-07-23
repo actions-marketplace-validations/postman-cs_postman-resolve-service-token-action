@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -6,8 +6,7 @@ import { describe, expect, it } from 'vitest';
 const root = process.cwd();
 const ciWorkflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
 const releaseWorkflow = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
-const seaPath = join(root, '.github/workflows/sea-binary.yml');
-const seaWorkflow = existsSync(seaPath) ? readFileSync(seaPath, 'utf8') : null;
+const seaWorkflow = readFileSync(join(root, '.github/workflows/sea-binary.yml'), 'utf8');
 const packagingSource = readFileSync(join(root, 'tests/cli-packaging.test.ts'), 'utf8');
 const verifyDistSource = readFileSync(join(root, 'scripts/verify-dist-artifact.mjs'), 'utf8');
 
@@ -110,7 +109,7 @@ describe('CI dist build contract', () => {
     expect(upload).toContain('path: dist/');
   });
 
-  it('pins actionlint 1.7.11 into RUNNER_TEMP and never installs Go in the CI gate', () => {
+  it('pins actionlint 1.7.11 into RUNNER_TEMP and never installs Go across CI, release, and SEA', () => {
     const install = namedStep(linux, 'Install actionlint');
     expect(install.length).toBeGreaterThan(0);
     expect(install).toContain(
@@ -123,24 +122,16 @@ describe('CI dist build contract', () => {
     expect(ciWorkflow).not.toContain('/main/scripts/download-actionlint.bash');
     expect(ciWorkflow).not.toContain('/main/scripts');
 
-    expect(ciWorkflow).toContain('download-actionlint.bash) 1.7.11 "$RUNNER_TEMP"');
-    expect(ciWorkflow).toContain('ACTIONLINT_BIN=$RUNNER_TEMP/actionlint');
-    expect(ciWorkflow).not.toContain('actions/setup-go');
-    expect(ciWorkflow).not.toContain('go install github.com/rhysd/actionlint');
-    expect(ciWorkflow).not.toMatch(/\bgo install\b/);
-
-    // Origin-shaped release/SEA already dropped Go; assert that when present.
-    for (const workflow of [releaseWorkflow, ...(seaWorkflow ? [seaWorkflow] : [])]) {
-      if (workflow.includes('download-actionlint.bash) 1.7.11 "$RUNNER_TEMP"')) {
-        expect(workflow).toContain('ACTIONLINT_BIN=$RUNNER_TEMP/actionlint');
-        expect(workflow).not.toContain('actions/setup-go');
-        expect(workflow).not.toContain('go install github.com/rhysd/actionlint');
-        expect(workflow).not.toMatch(/\bgo install\b/);
-      }
+    for (const workflow of [ciWorkflow, releaseWorkflow]) {
+      expect(workflow).toContain('download-actionlint.bash) 1.7.11 "$RUNNER_TEMP"');
+      expect(workflow).toContain('ACTIONLINT_BIN=$RUNNER_TEMP/actionlint');
     }
-    if (seaWorkflow) {
-      expect(seaWorkflow).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
+    for (const workflow of [ciWorkflow, releaseWorkflow, seaWorkflow]) {
+      expect(workflow).not.toContain('actions/setup-go');
+      expect(workflow).not.toContain('go install github.com/rhysd/actionlint');
+      expect(workflow).not.toContain('go install');
     }
+    expect(seaWorkflow).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
   });
 
   it('caches Windows node_modules with exact pin, no restore keys, and guarded miss install', () => {
@@ -207,12 +198,17 @@ describe('CI dist build contract', () => {
     expect(packagingSource).toContain("process.platform === 'win32' ? `${binName}.cmd` : binName");
     expect(packagingSource).toContain('function planPackedBinInvocation(');
     expect(packagingSource).toContain('async function runPackedBin(');
-    expect(packagingSource).toContain("process.env.ComSpec ?? process.env.COMSPEC ?? 'cmd.exe'");
+    expect(packagingSource).toContain('const env = options?.env ?? process.env;');
+    expect(packagingSource).toContain("const comSpec = env.ComSpec ?? env.COMSPEC ?? 'cmd.exe';");
     expect(packagingSource).toContain("'/d', '/s', '/c'");
+    expect(packagingSource).toContain('`"${commandPayload}"`');
+    expect(packagingSource).toContain('windowsVerbatimArguments: true');
+    expect(packagingSource).toContain('planPackedBinInvocation(binPath, args, { env: options.env })');
     expect(packagingSource).toContain('readdir(sandbox, { recursive: true })');
     expect(packagingSource).not.toMatch(/\bexecFileAsync\(\s*binPath\b/);
     expect(packagingSource).not.toMatch(/\bexecFileAsync\(\s*['"]find['"]/);
     expect(packagingSource).not.toMatch(/\bspawnSync\(\s*['"]find['"]/);
+    expect(packagingSource).not.toMatch(/\bshell:\s*true\b/);
     expect(packagingSource).toMatch(/process\.platform !== 'win32'/);
 
     expect(verifyDistSource).toContain("if (process.platform === 'win32') return;");
