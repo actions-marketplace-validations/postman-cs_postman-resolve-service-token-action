@@ -44,6 +44,17 @@ Release `verify-package-windows` checks out tag and runs suite against committed
 
 See workspace-root `../../docs/CI.md` for shared rationale.
 
+## Releases
+
+Tags are an **output** of passing run, never input. Never push release tag by hand; `.githooks/pre-push` rejects it.
+
+- `.github/workflows/auto-release.yml` runs on every push to `main` and drives `scripts/release-cut.mjs`.
+- `node scripts/release-cut.mjs --plan` reports pending cut (fetch tags first). `--execute` bumps, rebuilds `dist/`, runs typecheck/lint/test, commits, re-verifies committed bytes, then tags last.
+- Version comes from highest tag ever cut, not `package.json`. Existing tags are burnt and skipped, so failed cut never reuses or rewinds version.
+- Conventional-commit type picks bump; `chore`/`ci`/`build`/`test`/`style` alone cut nothing.
+- Release commit lives only on tag. `main` never carries bundled bytes; tag-only commit parents reviewed main SHA and carries `dist/`.
+- `RELEASE_POLICY.md` holds full contract.
+
 ## Anti-Patterns
 
 - Never hardcode secrets, tokens, or absolute paths in durable memory

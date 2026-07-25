@@ -13,13 +13,27 @@ Git tags and GitHub releases are the public release identifiers for this action.
 
 ## Release checks
 
-Cut an immutable release with the Release workflow's `workflow_dispatch` event and its `version` input. The workflow:
+Releases are cut automatically. Merging to `main` runs `.github/workflows/auto-release.yml`,
+which derives the next version from the conventional-commit history, then runs
+`scripts/release-cut.mjs`: bump, rebuild `dist/`, run the gate set, commit, and tag.
 
-1. Checks out the reviewed main SHA and runs `npm ci`, `npm run bundle`, and the package gates.
-2. Commits `dist/` onto a tag-only commit whose parent is that main SHA; main remains untouched.
-3. Creates annotated tag `v<version>` on that commit and pushes only the tag.
-4. Checks out the tag in `verify-package` (ubuntu) and `verify-package-windows` (windows-latest); both consume committed tag bytes with no rebuild. Windows asserts dist present and untouched before and after `node --run test`.
-5. Publish runs only when both verify jobs succeed, then publishes npm with provenance and advances the rolling `v1` alias.
+The tag is created only after the exact bytes of the release commit pass every
+gate, so a failed cut leaves no tag and burns no version number. The next merge
+retries on a fresh version, skipping any already-tagged one.
+
+Do not push `vX.Y.Z` tags by hand. The pre-push hook refuses them, because a
+hand-pushed tag becomes a public identifier before any gate has run against it.
+
+To see what the next merge would cut:
+
+```sh
+node scripts/release-cut.mjs --plan
+```
+
+After the tag push, `release.yml` verifies and publishes:
+
+1. Checks out the tagged commit in `verify-package` (ubuntu) and `verify-package-windows` (windows-latest); both consume committed tag bytes with no rebuild. Windows asserts dist present and untouched before and after `node --run test`.
+2. Publish runs only when both verify jobs succeed, then publishes npm with provenance and advances the rolling `v2` alias.
 
 The parent relationship is the audit link to reviewed source. The release bytes reproduce with `npm ci && npm run bundle` at the tag commit's parent. A bare tag without committed `dist/` fails artifact verification.
 
