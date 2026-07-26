@@ -154,6 +154,8 @@ describe('auto-release workflow', () => {
     expect(dispatch).toBeGreaterThan(push);
     expect(autoReleaseWorkflow).toContain('require(process.env.PLAN_FILE).previous');
     expect(autoReleaseWorkflow).toContain('gh release view "$TAG"');
-    expect(autoReleaseWorkflow).toContain('gh workflow run release.yml --ref "$TAG"');
+    expect(autoReleaseWorkflow).toContain(
+      'gh workflow run release.yml --ref "$TAG" -f version="${TAG#v}" -f existing_tag=true'
+    );
   });
 });

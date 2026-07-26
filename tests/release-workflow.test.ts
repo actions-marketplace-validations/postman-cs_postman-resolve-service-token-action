@@ -13,7 +13,9 @@ function job(name: string) {
 describe('release workflow contract', () => {
   it('cuts an annotated immutable tag containing dist without modifying main', () => {
     const cut = job('cut');
-    expect(cut).toContain("if: ${{ github.event_name == 'workflow_dispatch' }}");
+    expect(cut).toContain(
+      "if: ${{ github.event_name == 'workflow_dispatch' && inputs.existing_tag != true }}"
+    );
     expect(cut).toContain('package.json');
     expect(cut).toContain('npm run bundle');
     expect(cut).toContain('node scripts/verify-dist-artifact.mjs');
@@ -24,6 +26,14 @@ describe('release workflow contract', () => {
     expect(cut).not.toMatch(/git push[^\n]*(?:refs\/heads\/|\bmain\b)/);
     expect(release).toContain('needs.cut.outputs.tag || github.ref_name');
     expect(release).toContain('needs.cut.outputs.sha || github.sha');
+  });
+
+  it('consumes an auto-cut tag without running the legacy manual cut job', () => {
+    expect(release).toContain('existing_tag:');
+    expect(release).toContain('type: boolean');
+    const classify = job('classify');
+    expect(classify).toContain('inputs.existing_tag == true');
+    expect(classify).toContain('ref: ${{ needs.cut.outputs.tag || github.ref }}');
   });
 
   it('classifies with the policy helper before install and serializes immutable release work without cancellation', () => {

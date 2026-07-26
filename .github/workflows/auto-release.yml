@@ -101,7 +101,7 @@ jobs:
           fi
           # GITHUB_TOKEN tag pushes do not trigger workflows. On a rerun with
           # no new cut, retry the latest tag when its GitHub release is absent.
-          gh workflow run release.yml --ref "$TAG"
+          gh workflow run release.yml --ref "$TAG" -f version="${TAG#v}" -f existing_tag=true
 
       - name: Report skipped cut
         if: steps.plan.outputs.release != 'true'
