@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 
-import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
+import { createTelemetryContext } from '@postman-cse/automation-core';
 import { resolveActionVersion } from './action-version.js';
 import { formatRejectedMint, inspectPmakIdentity, maskPmakDiagnostic } from './pmak-diagnostics.js';
 
