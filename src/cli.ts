@@ -74,6 +74,18 @@ const cliCore: CoreLike = {
   info(message) {
     console.error(message);
   },
+  // Diagnostics belong on stderr so `--json`-style stdout stays parseable.
+  // Whether these lines are emitted at all is the logger's level decision,
+  // driven by POSTMAN_ACTIONS_LOG_LEVEL / RUNNER_DEBUG.
+  debug(message) {
+    console.error(message);
+  },
+  warning(message) {
+    console.error(message);
+  },
+  error(message) {
+    console.error(message);
+  },
   setOutput(name, value) {
     outputs[name] = value;
   },

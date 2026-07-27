@@ -1,6 +1,12 @@
 import { spawn } from 'node:child_process';
 
-import { createTelemetryContext } from '@postman-cse/automation-core';
+import {
+  createLogger,
+  createTelemetryContext,
+  httpFields,
+  type LogSink,
+  type Logger
+} from '@postman-cse/automation-core';
 import { resolveActionVersion } from './action-version.js';
 import { formatRejectedMint, inspectPmakIdentity, maskPmakDiagnostic } from './pmak-diagnostics.js';
 
@@ -27,8 +33,26 @@ export interface ResolveResult {
 export interface CoreLike {
   info(message: string): void;
   warning?(message: string): void;
+  debug?(message: string): void;
+  error?(message: string): void;
   setOutput(name: string, value: string): void;
   setSecret(value: string): void;
+}
+
+/**
+ * Adapt the @actions/core facade this action already depends on to the shared
+ * LogSink. Debug is dropped rather than folded into info when the host has no
+ * debug channel: debug output is opt-in, and promoting it would put verbose
+ * diagnostics into every consumer's default log. Warning and error fall back to
+ * the next channel the host does provide, so a failure is never silent.
+ */
+export function coreLogSink(core: CoreLike): LogSink {
+  return {
+    debug: (message) => core.debug?.(message),
+    info: (message) => core.info(message),
+    warning: (message) => (core.warning ?? core.info)(message),
+    error: (message) => (core.error ?? core.warning ?? core.info)(message)
+  };
 }
 
 export interface ExecFileOptions {
@@ -49,6 +73,8 @@ export interface ResolveDependencies {
   fetcher: Fetcher;
   execFile: ExecFile;
   env?: NodeJS.ProcessEnv;
+  /** Injected by tests; otherwise built over `core` when the run starts. */
+  logger?: Logger;
 }
 
 export interface ActionInputReader {
@@ -291,11 +317,12 @@ function extractMeIdentity(payload: unknown): MeIdentity {
 }
 
 
-async function mintServiceToken(inputs: ResolveInputs, apiHost: string, fetcher: Fetcher): Promise<string> {
+async function mintServiceToken(inputs: ResolveInputs, apiHost: string, fetcher: Fetcher, logger: Logger): Promise<string> {
   const endpoint = `${apiHost}/service-account-tokens`;
   const secrets = [inputs.postmanApiKey, inputs.postmanAccessToken];
   const remediation =
     'Verify the postman-api-key, team, stack, and region; retry; contact Postman support if the failure persists.';
+  const started = Date.now();
   let response: Response;
   try {
     response = await fetcher(endpoint, {
@@ -307,16 +334,39 @@ async function mintServiceToken(inputs: ResolveInputs, apiHost: string, fetcher:
       body: JSON.stringify({ apiKey: inputs.postmanApiKey })
     });
   } catch (error) {
+    // Transport never reached a status. Log the attempt itself so a DNS or TLS
+    // failure against the wrong host is distinguishable from a rejected key.
+    logger.failure(
+      'mint request failed before a response',
+      error,
+      httpFields({ method: 'POST', url: endpoint, durationMs: Date.now() - started })
+    );
     const cause = sanitizeDiagnosticDetail(error, secrets);
     throw new Error(
       `POST ${endpoint} (mint service-account token) failed: ${cause}. ${remediation}`,
       { cause: error }
     );
   }
+  const requestId = response.headers?.get?.('x-request-id') ?? undefined;
+  logger.debug(
+    'mint response',
+    httpFields({
+      method: 'POST',
+      url: endpoint,
+      status: response.status,
+      durationMs: Date.now() - started,
+      requestId
+    })
+  );
   let body: string;
   try {
     body = await response.text();
   } catch (error) {
+    logger.failure(
+      'mint response body unreadable',
+      error,
+      httpFields({ method: 'POST', url: endpoint, status: response.status, requestId })
+    );
     const cause = sanitizeDiagnosticDetail(error, secrets);
     throw new Error(
       `POST ${endpoint} (mint service-account token) failed to read response body: ${cause}. ${remediation}`,
@@ -325,6 +375,17 @@ async function mintServiceToken(inputs: ResolveInputs, apiHost: string, fetcher:
   }
   if (!response.ok) {
     const status = response.status;
+    logger.error(
+      'mint rejected',
+      httpFields({
+        method: 'POST',
+        url: endpoint,
+        status,
+        durationMs: Date.now() - started,
+        requestId,
+        bodyPreview: sanitizeDiagnosticDetail(body, secrets)
+      })
+    );
     if (status === 401 || status === 403) {
       const original = `POST ${endpoint} (mint service-account token): The postman-api-key was rejected (HTTP ${status}); confirm it is a valid, enabled PMAK for the intended team.`;
       const diagnostic = await inspectPmakIdentity({
@@ -363,11 +424,12 @@ async function mintServiceToken(inputs: ResolveInputs, apiHost: string, fetcher:
   return token;
 }
 
-async function resolveTeamIdAndIdentity(inputs: ResolveInputs, apiHost: string, token: string, fetcher: Fetcher): Promise<MeIdentity & { teamId: string }> {
+async function resolveTeamIdAndIdentity(inputs: ResolveInputs, apiHost: string, token: string, fetcher: Fetcher, logger: Logger): Promise<MeIdentity & { teamId: string }> {
   const endpoint = `${apiHost}/me`;
   const secrets = [token, inputs.postmanApiKey, inputs.postmanAccessToken];
   const remediation =
     'Verify the access token or postman-api-key, team, stack, and region, or supply a verified postman-team-id.';
+  const started = Date.now();
   let response: Response;
   try {
     response = await fetcher(endpoint, {
@@ -377,16 +439,37 @@ async function resolveTeamIdAndIdentity(inputs: ResolveInputs, apiHost: string, 
       })
     });
   } catch (error) {
+    logger.failure(
+      'identity request failed before a response',
+      error,
+      httpFields({ method: 'GET', url: endpoint, durationMs: Date.now() - started })
+    );
     const cause = sanitizeDiagnosticDetail(error, secrets);
     throw new Error(
       `GET ${endpoint} (resolve team identity) failed: ${cause}. ${remediation}`,
       { cause: error }
     );
   }
+  const requestId = response.headers?.get?.('x-request-id') ?? undefined;
+  logger.debug(
+    'identity response',
+    httpFields({
+      method: 'GET',
+      url: endpoint,
+      status: response.status,
+      durationMs: Date.now() - started,
+      requestId
+    })
+  );
   let body: string;
   try {
     body = await response.text();
   } catch (error) {
+    logger.failure(
+      'identity response body unreadable',
+      error,
+      httpFields({ method: 'GET', url: endpoint, status: response.status, requestId })
+    );
     const cause = sanitizeDiagnosticDetail(error, secrets);
     throw new Error(
       `GET ${endpoint} (resolve team identity) failed to read response body: ${cause}. ${remediation}`,
@@ -395,6 +478,17 @@ async function resolveTeamIdAndIdentity(inputs: ResolveInputs, apiHost: string, 
   }
   if (!response.ok) {
     const detail = sanitizeDiagnosticDetail(body, secrets);
+    logger.error(
+      'identity rejected',
+      httpFields({
+        method: 'GET',
+        url: endpoint,
+        status: response.status,
+        durationMs: Date.now() - started,
+        requestId,
+        bodyPreview: detail
+      })
+    );
     throw new Error(
       `GET ${endpoint} (resolve team identity) failed (HTTP ${response.status})${detail ? `: ${detail}` : ''}. ${remediation}`
     );
@@ -503,24 +597,59 @@ function warn(core: CoreLike, message: string): void {
 }
 
 export async function runResolveServiceToken(inputs: ResolveInputs, dependencies: ResolveDependencies): Promise<ResolveResult> {
-  const telemetry = createTelemetryContext({ action: 'postman-resolve-service-token-action', actionVersion: resolveActionVersion(), logger: dependencies.core });
+  const actionVersion = resolveActionVersion();
+  const logger =
+    dependencies.logger ??
+    createLogger({
+      sink: coreLogSink(dependencies.core),
+      env: dependencies.env ?? process.env,
+      fields: { action: 'postman-resolve-service-token-action', version: actionVersion }
+    });
+  // Register before the first line is emitted: a credential that reaches a log
+  // before the redactor knows it is already leaked.
+  logger.addSecret(inputs.postmanApiKey);
+  logger.addSecret(inputs.postmanAccessToken);
+  logger.addSecret(inputs.githubToken);
+
+  const telemetry = createTelemetryContext({ action: 'postman-resolve-service-token-action', actionVersion, logger: dependencies.core });
+  logger.debug('run start', {
+    stack: inputs.postmanStack,
+    region: inputs.postmanRegion,
+    credential: inputs.postmanAccessToken ? 'provided-access-token' : 'pmak-mint',
+    team_id_provided: Boolean(inputs.postmanTeamId),
+    write_github_secret: inputs.writeGithubSecret
+  });
   try {
-    const result = await runResolveServiceTokenInner(inputs, dependencies, telemetry);
+    const result = await runResolveServiceTokenInner(inputs, { ...dependencies, logger }, telemetry);
     telemetry.setAccountType('service_account');
     telemetry.emitCompletion('success');
+    logger.debug('run complete', { skipped: result.skipped });
     return result;
   } catch (error) {
     telemetry.setAccountType('service_account');
     telemetry.emitCompletion('failure');
+    logger.failure('run failed', error);
     throw error;
   }
 }
 
 async function runResolveServiceTokenInner(inputs: ResolveInputs, dependencies: ResolveDependencies, telemetry: ReturnType<typeof createTelemetryContext>): Promise<ResolveResult> {
+  const logger =
+    dependencies.logger ??
+    createLogger({ sink: coreLogSink(dependencies.core), env: dependencies.env ?? process.env });
   validateInputs(inputs);
   const apiHost = resolvePostmanApiHost(inputs.postmanStack, inputs.postmanRegion);
   const skipped = Boolean(inputs.postmanAccessToken);
-  const token = inputs.postmanAccessToken ?? await mintServiceToken(inputs, apiHost, dependencies.fetcher);
+  const token =
+    inputs.postmanAccessToken ??
+    (await logger.phase(
+      'mint-service-token',
+      () => mintServiceToken(inputs, apiHost, dependencies.fetcher, logger),
+      { api_host: apiHost }
+    ));
+  // The minted token is a credential in its own right: register it before it
+  // can reach any later line or error.
+  logger.addSecret(token);
   dependencies.core.setSecret(token);
   if (skipped) {
     warn(dependencies.core, 'Using a provided postman-access-token. Prefer minting a fresh service-account token with postman-api-key unless this workflow intentionally manages token rotation outside this action.');
@@ -531,7 +660,11 @@ async function runResolveServiceTokenInner(inputs: ResolveInputs, dependencies: 
     teamId = inputs.postmanTeamId;
     dependencies.core.info(`Using provided postman-team-id ${formatDiagnosticValue(teamId)}.`);
   } else {
-    const identity = await resolveTeamIdAndIdentity(inputs, apiHost, token, dependencies.fetcher);
+    const identity = await logger.phase(
+      'resolve-team-identity',
+      () => resolveTeamIdAndIdentity(inputs, apiHost, token, dependencies.fetcher, logger),
+      { api_host: apiHost }
+    );
     teamId = identity.teamId;
     if (!skipped) {
       const userId = formatDiagnosticValue(identity.userId ?? 'unknown');
@@ -548,7 +681,7 @@ async function runResolveServiceTokenInner(inputs: ResolveInputs, dependencies: 
   dependencies.core.setOutput('skipped', result.skipped ? 'true' : 'false');
 
   if (inputs.writeGithubSecret) {
-    await writeGitHubSecrets(result, inputs, dependencies);
+    await logger.phase('write-github-secrets', () => writeGitHubSecrets(result, inputs, dependencies));
   }
 
   return result;
