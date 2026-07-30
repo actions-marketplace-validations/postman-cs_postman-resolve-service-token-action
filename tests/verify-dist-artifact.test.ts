@@ -37,6 +37,8 @@ interface FixtureOptions {
   shebang?: boolean;
   mode?: number;
   helpBody?: string;
+  helpHangs?: boolean;
+  versionHangs?: boolean;
   cliVersion?: string;
   pkgVersion?: string;
   extraDistFile?: string;
@@ -89,15 +91,24 @@ async function writeFixture(root: string, options: FixtureOptions = {}): Promise
     : '';
   const cliSource = `${shebang}${requireLine}${requireExample}const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h')) {
-  process.stdout.write(${JSON.stringify(helpBody)});
-  process.exit(0);
+  if (${options.helpHangs === true}) {
+    setInterval(() => {}, 1_000);
+  } else {
+    process.stdout.write(${JSON.stringify(helpBody)});
+    process.exit(0);
+  }
 }
-if (args.includes('--version') || args.includes('-V')) {
-  process.stdout.write(${JSON.stringify(`${cliVersion}\n`)});
-  process.exit(0);
+else if (args.includes('--version') || args.includes('-V')) {
+  if (${options.versionHangs === true}) {
+    setInterval(() => {}, 1_000);
+  } else {
+    process.stdout.write(${JSON.stringify(`${cliVersion}\n`)});
+    process.exit(0);
+  }
+} else {
+  process.stderr.write('unexpected\\n');
+  process.exit(1);
 }
-process.stderr.write('unexpected\\n');
-process.exit(1);
 `;
   const cliPath = path.join(distDir, 'cli.cjs');
   await writeFile(cliPath, cliSource, { encoding: 'utf8', mode: options.mode ?? 0o755 });
@@ -272,6 +283,28 @@ describe('verify-dist-artifact canonical contract', () => {
     expect(result.code).not.toBe(0);
     expect(result.stderr).toMatch(/missing usage banner/);
   });
+
+  it('fails within the test budget when direct --help hangs', async () => {
+    const root = await makeTempDir('verify-dist-help-timeout-');
+    await writeFixture(root, { helpHangs: true });
+    const startedAt = Date.now();
+    const result = await runVerify(root);
+    const elapsedMs = Date.now() - startedAt;
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('direct dist/cli.cjs --help timed out after 5000ms');
+    expect(elapsedMs).toBeLessThan(10_000);
+  }, 15_000);
+
+  it('fails within the test budget when direct --version hangs', async () => {
+    const root = await makeTempDir('verify-dist-version-timeout-');
+    await writeFixture(root, { versionHangs: true });
+    const startedAt = Date.now();
+    const result = await runVerify(root);
+    const elapsedMs = Date.now() - startedAt;
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('direct dist/cli.cjs --version timed out after 5000ms');
+    expect(elapsedMs).toBeLessThan(10_000);
+  }, 15_000);
 
   it('fails when direct --version drifts from package.json', async () => {
     const root = await makeTempDir('verify-dist-version-');
