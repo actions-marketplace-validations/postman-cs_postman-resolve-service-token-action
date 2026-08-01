@@ -8,8 +8,7 @@
  * name cassette files that exist. Unreadable HTTP call sites fail closed rather
  * than disappearing from the surface.
  *
- * The extractor/validator import is the shared WS4 contract; it moves to
- * `@postman-cse/automation-core/route-manifest` when that subpath publishes.
+ * The extractor/validator is the shared WS4 contract published by automation-core.
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,7 +22,7 @@ import {
   validateRouteManifest,
   type RouteManifest,
   type RouteManifestRoute
-} from './route-manifest-contract.js';
+} from '@postman-cse/automation-core/route-manifest';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 const sourceRoot = path.join(repoRoot, 'src');
