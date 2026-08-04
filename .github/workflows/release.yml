@@ -98,6 +98,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      release_tgz_sha256: ${{ steps.artifact-digests.outputs.release_tgz_sha256 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -131,45 +133,61 @@ jobs:
           GITHUB_SHA: ${{ needs.cut.outputs.sha || github.sha }}
           GITHUB_REF_NAME: ${{ needs.cut.outputs.tag || github.ref_name }}
         run: |
-          mkdir release-stage
-          npm pack --pack-destination release-stage
-          mv release-stage/*.tgz release-stage/release.tgz
+          npm pack --pack-destination .
+          mv ./*.tgz release.tgz
+      - name: Record trusted tarball digest
+        id: artifact-digests
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const tgz = crypto.createHash('sha256').update(fs.readFileSync('release.tgz')).digest('hex');
+          if (!/^[a-f0-9]{64}$/.test(tgz)) {
+            console.error('::error::failed to compute trusted tarball digest');
+            process.exit(1);
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_tgz_sha256=${tgz}\n`);
+          NODE
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release.tgz
+          if-no-files-found: error
+
+  build-sea:
+    needs: [cut, classify]
+    if: ${{ always() && needs.classify.outputs.release_kind == 'immutable' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.cut.outputs.tag || github.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm ci
+      - name: Build and smoke SEA binary
+        env:
+          PACKAGE_VERSION: ${{ needs.classify.outputs.package_version }}
+        run: |
           bash scripts/build-sea.sh
-          VERSION="${{ needs.classify.outputs.package_version }}"
+          VERSION="$PACKAGE_VERSION"
           BIN="build/sea/postman-resolve-service-token-${VERSION}-linux-x64"
           out="$(env -i PATH=/nonexistent "$BIN" 2>&1 || true)"
           echo "$out" | grep -qE 'is missing or invalid|is required'
           test "$(env -i PATH=/nonexistent "$BIN" --version)" = "$VERSION"
           test "$(NODE_OPTIONS='--this-flag-does-not-exist' "$BIN" --version)" = "$VERSION"
           node scripts/assert-sea-proxy.mjs "$BIN" api.getpostman.com:443 --postman-api-key proxy-smoke-key --postman-team-id proxy-smoke-team
-          cp "$BIN" "$BIN.sha256" release-stage/
-          node - <<'NODE'
-          const { createHash } = require('node:crypto');
-          const { readFileSync, writeFileSync } = require('node:fs');
-          const pkg = require('./package.json');
-          const sea = `postman-resolve-service-token-${pkg.version}-linux-x64`;
-          const paths = ['release.tgz', sea, `${sea}.sha256`];
-          const sha256 = (path) => createHash('sha256').update(readFileSync(`release-stage/${path}`)).digest('hex');
-          writeFileSync('release-stage/release-manifest.json', `${JSON.stringify({
-            schema_version: 1,
-            repository: process.env.GITHUB_REPOSITORY,
-            commit_sha: process.env.GITHUB_SHA,
-            tag: process.env.GITHUB_REF_NAME,
-            package_name: pkg.name,
-            package_version: pkg.version,
-            artifacts: paths.map((path) => ({ path, sha256: sha256(path) }))
-          }, null, 2)}\n`);
-          NODE
-      - name: Verify staged release artifacts
-        run: node scripts/verify-release-artifacts.mjs release-stage
       - uses: actions/upload-artifact@v7
         with:
-          name: release-${{ github.run_id }}-${{ github.run_attempt }}
+          name: sea-binary-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            release-stage/release.tgz
-            release-stage/release-manifest.json
-            release-stage/postman-resolve-service-token-${{ needs.classify.outputs.package_version }}-linux-x64
-            release-stage/postman-resolve-service-token-${{ needs.classify.outputs.package_version }}-linux-x64.sha256
+            build/sea/postman-resolve-service-token-*-linux-x64
+            build/sea/postman-resolve-service-token-*-linux-x64.sha256
           if-no-files-found: error
 
   verify-package-windows:
@@ -200,8 +218,8 @@ jobs:
       - run: node scripts/assert-release-dist-untouched.mjs
 
   publish:
-    needs: [cut, classify, verify-package, verify-package-windows]
-    if: ${{ always() && needs.classify.outputs.release_kind == 'immutable' && needs.verify-package.result == 'success' && needs.verify-package-windows.result == 'success' }}
+    needs: [cut, classify, verify-package, verify-package-windows, build-sea]
+    if: ${{ always() && needs.classify.outputs.release_kind == 'immutable' && needs.verify-package.result == 'success' && needs.verify-package-windows.result == 'success' && needs.build-sea.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -215,6 +233,56 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+      - name: Authenticate transferred tarball
+        env:
+          EXPECTED_RELEASE_TGZ_SHA256: ${{ needs.verify-package.outputs.release_tgz_sha256 }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const expected = process.env.EXPECTED_RELEASE_TGZ_SHA256;
+          const actual = crypto.createHash('sha256').update(fs.readFileSync('release.tgz')).digest('hex');
+          if (!/^[a-f0-9]{64}$/.test(expected ?? '') || actual !== expected) {
+            console.error('::error::release.tgz hash does not match trusted verify-package output');
+            process.exit(1);
+          }
+          NODE
+      - uses: actions/download-artifact@v8
+        with:
+          name: sea-binary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: sea-artifact
+      - name: Stage release manifest with SEA allowlist
+        env:
+          GITHUB_SHA: ${{ needs.cut.outputs.sha || github.sha }}
+          GITHUB_REF_NAME: ${{ needs.cut.outputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          find sea-artifact -type f \( -name 'postman-resolve-service-token-*-linux-x64' -o -name 'postman-resolve-service-token-*-linux-x64.sha256' \) -exec cp -f {} . \;
+          node <<'NODE'
+          const { createHash } = require('node:crypto');
+          const { execFileSync } = require('node:child_process');
+          const { readFileSync, writeFileSync, existsSync } = require('node:fs');
+          const pkg = JSON.parse(execFileSync('tar', ['-xOf', 'release.tgz', 'package/package.json'], { encoding: 'utf8' }));
+          const sea = `postman-resolve-service-token-${pkg.version}-linux-x64`;
+          const paths = ['release.tgz', sea, `${sea}.sha256`];
+          const sha256 = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
+          for (const path of paths) {
+            if (!existsSync(path)) {
+              console.error(`::error::missing staged artifact ${path}`);
+              process.exit(1);
+            }
+          }
+          writeFileSync('release-manifest.json', `${JSON.stringify({
+            schema_version: 1,
+            repository: process.env.GITHUB_REPOSITORY,
+            commit_sha: process.env.GITHUB_SHA,
+            tag: process.env.GITHUB_REF_NAME,
+            package_name: pkg.name,
+            package_version: pkg.version,
+            artifacts: paths.map((path) => ({ path, sha256: sha256(path) }))
+          }, null, 2)}\n`);
+          NODE
+          rm -rf sea-artifact
       - name: Verify checksummed release artifacts
         env:
           GITHUB_SHA: ${{ needs.cut.outputs.sha || github.sha }}

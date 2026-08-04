@@ -52,7 +52,7 @@ describe('release workflow contract', () => {
     expect(job('verify-package')).toContain("needs.classify.outputs.release_kind == 'immutable'");
     expect(job('verify-package-windows')).toContain("needs.classify.outputs.release_kind == 'immutable'");
     expect(job('publish')).toContain(
-      "needs.classify.outputs.release_kind == 'immutable' && needs.verify-package.result == 'success' && needs.verify-package-windows.result == 'success'"
+      "needs.classify.outputs.release_kind == 'immutable' && needs.verify-package.result == 'success' && needs.verify-package-windows.result == 'success' && needs.build-sea.result == 'success'"
     );
     expect(job('advance-major-alias')).toContain("needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success'");
     expect(job('dispatch-live-monitor')).toContain("needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success'");
@@ -82,12 +82,14 @@ describe('release workflow contract', () => {
     const testIdx = win.indexOf('- run: node --run test');
     expect(firstGuard).toBeLessThan(testIdx);
     expect(secondGuard).toBeGreaterThan(testIdx);
-    expect(publish).toContain('needs: [cut, classify, verify-package, verify-package-windows]');
+    expect(publish).toContain('needs: [cut, classify, verify-package, verify-package-windows, build-sea]');
     expect(publish).toContain("needs.verify-package-windows.result == 'success'");
+    expect(publish).toContain("needs.build-sea.result == 'success'");
   });
 
   it('uses unprivileged artifact construction and artifact-only privileged publication', () => {
     const verify = job('verify-package');
+    const buildSea = job('build-sea');
     const publish = job('publish');
     expect(verify).toContain('contents: read');
     expect(verify).not.toContain('id-token: write');
@@ -103,17 +105,22 @@ describe('release workflow contract', () => {
     expect(verify).not.toContain('npm publish');
     expect(verify).not.toContain('action-gh-release');
     expect(verify).not.toContain('git push');
+    expect(verify).not.toContain('scripts/build-sea.sh');
+    expect(verify).not.toContain('scripts/assert-sea-proxy.mjs');
     expect(verify).toContain('release.tgz');
-    expect(verify).toContain('release-manifest.json');
-    expect(verify).toContain("const paths = ['release.tgz', sea, `${sea}.sha256`]");
-    expect(verify).not.toContain('readdirSync');
-    expect(verify).toContain('node scripts/verify-release-artifacts.mjs release-stage');
-    expect(verify.indexOf('Verify staged release artifacts')).toBeLessThan(verify.indexOf('upload-artifact@v7'));
+    expect(verify).toContain('release_tgz_sha256: ${{ steps.artifact-digests.outputs.release_tgz_sha256 }}');
+    expect(verify).toContain('Record trusted tarball digest');
+    expect(verify.indexOf('Record trusted tarball digest')).toBeLessThan(verify.indexOf('upload-artifact@v7'));
     expect(verify).toContain('release-${{ github.run_id }}-${{ github.run_attempt }}');
-    expect(verify).toContain('release-stage/release.tgz');
-    expect(verify).toContain('release-stage/release-manifest.json');
-    expect(verify).toContain('release-stage/postman-resolve-service-token-${{ needs.classify.outputs.package_version }}-linux-x64');
-    expect(verify).toContain('release-stage/postman-resolve-service-token-${{ needs.classify.outputs.package_version }}-linux-x64.sha256');
+    expect(verify).toContain('path: release.tgz');
+    expect(buildSea).toContain('contents: read');
+    expect(buildSea).not.toContain('id-token: write');
+    expect(buildSea).toContain('scripts/build-sea.sh');
+    expect(buildSea).toContain("NODE_OPTIONS='--this-flag-does-not-exist'");
+    expect(buildSea).toContain('scripts/assert-sea-proxy.mjs');
+    expect(buildSea).toContain('sea-binary-${{ github.run_id }}-${{ github.run_attempt }}');
+    expect(buildSea).toContain('build/sea/postman-resolve-service-token-*-linux-x64');
+    expect(buildSea).toContain('build/sea/postman-resolve-service-token-*-linux-x64.sha256');
     expect(publish).toContain('contents: write');
     expect(publish).toContain('id-token: write');
     expect(publish).not.toContain('actions/checkout');
@@ -122,6 +129,16 @@ describe('release workflow contract', () => {
     expect(publish).not.toContain('npm run bundle');
     expect(publish).not.toContain('npm test');
     expect(publish).not.toMatch(/^\s*- run: npm pack/m);
+    expect(publish).toContain('EXPECTED_RELEASE_TGZ_SHA256: ${{ needs.verify-package.outputs.release_tgz_sha256 }}');
+    expect(publish).toContain('Authenticate transferred tarball');
+    expect(publish).toContain('release.tgz hash does not match trusted verify-package output');
+    expect(publish).toContain('sea-binary-${{ github.run_id }}-${{ github.run_attempt }}');
+    expect(publish).toContain('Stage release manifest with SEA allowlist');
+    expect(publish).toContain('release-manifest.json');
+    expect(publish).toContain("const paths = ['release.tgz', sea, `${sea}.sha256`]");
+    expect(publish.indexOf('Stage release manifest with SEA allowlist')).toBeLessThan(
+      publish.indexOf('Verify checksummed release artifacts')
+    );
     expect(publish).toContain('Verify checksummed release artifacts');
     expect(publish).toContain('exact artifact allowlist mismatch');
     expect(publish).toContain('tarball package identity mismatch');
@@ -152,8 +169,8 @@ describe('release workflow contract', () => {
   });
 
   it('advances aliases from scoped ls-remote identity before force-push without full history fetch', () => {
-    expect(job('verify-package')).toContain('scripts/assert-sea-proxy.mjs');
-    expect(job('verify-package')).toContain("NODE_OPTIONS='--this-flag-does-not-exist'");
+    expect(job('build-sea')).toContain('scripts/assert-sea-proxy.mjs');
+    expect(job('build-sea')).toContain("NODE_OPTIONS='--this-flag-does-not-exist'");
     expect(sea).toContain('scripts/assert-sea-proxy.mjs');
     expect(sea).toContain('.sha256');
     const alias = job('advance-major-alias');
