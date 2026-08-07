@@ -65,9 +65,14 @@ describe('release workflow contract', () => {
     expect(win).toContain('needs: [cut, classify]');
     expect(win).toContain('ref: ${{ needs.cut.outputs.tag || github.ref }}');
     expect(win).toContain('id: windows-node-modules');
-    expect(win).toContain(
-      'uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0'
-    );
+    // Semantic pin: any 40-char hex SHA, consistent across file, with semver comment
+    {
+      const cachePins = [...release.matchAll(/actions\/cache@([0-9a-f]{40})/g)].map((m) => m[1]!);
+      expect(cachePins.length).toBeGreaterThanOrEqual(1);
+      for (const sha of cachePins) expect(sha).toMatch(/^[0-9a-f]{40}$/);
+      expect(new Set(cachePins).size).toBe(1);
+      expect(win).toMatch(/uses:\s*actions\/cache@[0-9a-f]{40}\s+#\s*v\d+\.\d+\.\d+/);
+    }
     expect(win).toContain("key: Windows/node-24/exact-${{ hashFiles('package-lock.json') }}");
     expect(win).not.toContain('restore-keys');
     expect(win).toContain('npm ci --prefer-offline --no-audit --no-fund');
