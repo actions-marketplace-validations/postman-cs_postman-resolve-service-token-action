@@ -16,7 +16,10 @@ tests/
 ## Commands
 
 ```bash
-npm ci && npm test && npm run typecheck && npm run lint
+npm ci
+npm test
+npm run typecheck
+npm run lint
 npm run verify:bundle  # build + runtime-shape check
 ```
 
