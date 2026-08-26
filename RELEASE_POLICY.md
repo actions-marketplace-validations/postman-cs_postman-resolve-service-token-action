@@ -44,7 +44,7 @@ The parent relationship is the audit link to reviewed source. The release bytes 
 
 ## npm package
 
-The CLI publishes as `@postman-cs/onboarding-resolve-service-token` with versions that match the immutable GitHub release tag. GitHub Releases remain authoritative if npm publication is unavailable; use `backfill-npm.yml` to publish immutable release assets once access exists. npm package identity is verified after a successful publish. The rolling `vN` alias updates the action channel and skips npm publishing.
+The CLI publishes as `@postman-cs/onboarding-resolve-service-token` with versions that match the immutable GitHub release tag. Publication is OIDC-only. GitHub Releases remain authoritative if npm publication is unavailable; rerun the immutable release after trusted publishing is restored. npm package identity is verified after a successful publish. The rolling `vN` alias updates the action channel and skips npm publishing.
 
 ## Compatibility
 

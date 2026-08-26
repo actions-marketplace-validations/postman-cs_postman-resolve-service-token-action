@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const release = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8');
-const backfill = readFileSync(join(process.cwd(), '.github/workflows/backfill-npm.yml'), 'utf8');
 const sea = readFileSync(join(process.cwd(), '.github/workflows/sea-binary.yml'), 'utf8');
 const ci = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
 
@@ -182,7 +181,7 @@ describe('release workflow contract', () => {
     expect(publish).toContain("if: steps.npm-publish.outputs.published == 'true'");
     expect(publish).toContain('name: Report npm publish skipped');
     expect(publish).toContain("if: steps.npm-publish.outputs.published != 'true'");
-    expect(publish).toContain('recover via backfill-npm.yml if needed');
+    expect(publish).toContain('rerun this release after trusted publishing is restored');
     expect(release.indexOf('  publish:')).toBeLessThan(release.indexOf('  advance-major-alias:'));
   });
 
@@ -220,18 +219,4 @@ describe('release workflow contract', () => {
     }
   });
 
-  it('backfills only immutable new-scope release assets without changing release channels', () => {
-    expect(backfill).toContain('workflow_dispatch:');
-    expect(backfill).toContain('Ordered space-separated immutable tags, oldest first');
-    expect(backfill).toContain('contents: read');
-    expect(backfill).toContain('id-token: write');
-    expect(backfill).not.toContain('actions/checkout');
-    expect(backfill).toContain("PKG_NAME='@postman-cs/onboarding-resolve-service-token'");
-    expect(backfill).toContain('gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern \'release.tgz\'');
-    expect(backfill).toContain('test "$PACKAGE_NAME" = "$PKG_NAME"');
-    expect(backfill).toContain('test "$PACKAGE_VERSION" = "${TAG#v}"');
-    expect(backfill).toContain('npm publish "$TARBALL" --provenance --access public --tag backfill');
-    expect(backfill).toContain('npm view "$PKG_NAME" versions --json');
-    expect(backfill).toContain('npm dist-tag add "$PKG_NAME@$HIGHEST" latest');
-  });
 });
