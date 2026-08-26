@@ -23,7 +23,7 @@ function stageReleaseDirectory(packageVersion = '2.0.4') {
   mkdirSync(packageDir);
   writeFileSync(
     join(packageDir, 'package.json'),
-    JSON.stringify({ name: '@postman/onboarding-resolve-service-token', version: packageVersion })
+    JSON.stringify({ name: '@postman-cs/onboarding-resolve-service-token', version: packageVersion })
   );
   const tarball = join(directory, 'release.tgz');
   execFileSync('tar', ['-czf', tarball, '-C', packRoot, 'package']);
@@ -40,7 +40,7 @@ function stageReleaseDirectory(packageVersion = '2.0.4') {
     repository: 'postman-cs/example',
     commit_sha: 'abc',
     tag: `v${packageVersion}`,
-    package_name: '@postman/onboarding-resolve-service-token',
+    package_name: '@postman-cs/onboarding-resolve-service-token',
     package_version: packageVersion,
     artifacts
   };
@@ -96,7 +96,7 @@ describe('release artifact verifier', () => {
           repository: 'postman-cs/example',
           commitSha: 'abc',
           tag: 'v2.0.4',
-          packageName: '@postman/onboarding-resolve-service-token',
+          packageName: '@postman-cs/onboarding-resolve-service-token',
           packageVersion: '2.0.4'
         })
       ).not.toThrow();

@@ -226,7 +226,7 @@ describe('release workflow contract', () => {
     expect(backfill).toContain('contents: read');
     expect(backfill).toContain('id-token: write');
     expect(backfill).not.toContain('actions/checkout');
-    expect(backfill).toContain("PKG_NAME='@postman/onboarding-resolve-service-token'");
+    expect(backfill).toContain("PKG_NAME='@postman-cs/onboarding-resolve-service-token'");
     expect(backfill).toContain('gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern \'release.tgz\'');
     expect(backfill).toContain('test "$PACKAGE_NAME" = "$PKG_NAME"');
     expect(backfill).toContain('test "$PACKAGE_VERSION" = "${TAG#v}"');
