@@ -182,7 +182,7 @@ describe('release workflow contract', () => {
     expect(publish).toContain("if: steps.npm-publish.outputs.published == 'true'");
     expect(publish).toContain('name: Report npm publish skipped');
     expect(publish).toContain("if: steps.npm-publish.outputs.published != 'true'");
-    expect(publish).toContain('recover via backfill-npm.yml once publish access exists');
+    expect(publish).toContain('recover via backfill-npm.yml if needed');
     expect(release.indexOf('  publish:')).toBeLessThan(release.indexOf('  advance-major-alias:'));
   });
 
