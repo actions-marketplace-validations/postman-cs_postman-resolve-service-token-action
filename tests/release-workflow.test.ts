@@ -178,6 +178,10 @@ describe('release workflow contract', () => {
     );
     expect(publish).toContain('npm view "$PKG_NAME@$PKG_VERSION" dist.integrity');
     expect(publish).toContain('name: Verify npm registry identity');
+    expect(publish).toContain('for attempt in $(seq 1 40)');
+    expect(publish).toContain('sleep 15');
+    expect(publish).toContain('npm error code E404');
+    expect(publish).toContain('non-E404 error');
     expect(publish).toContain("if: steps.npm-publish.outputs.published == 'true'");
     expect(publish).toContain('name: Report npm publish skipped');
     expect(publish).toContain("if: steps.npm-publish.outputs.published != 'true'");
