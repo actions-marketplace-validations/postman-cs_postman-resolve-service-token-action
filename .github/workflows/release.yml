@@ -356,9 +356,28 @@ jobs:
       - name: Verify npm registry identity
         if: steps.npm-publish.outputs.published == 'true'
         run: |
+          set -euo pipefail
           PKG_NAME=$(node -e "const m=require('./release-manifest.json'); console.log(m.package_name)")
           PKG_VERSION=$(node -e "const m=require('./release-manifest.json'); console.log(m.package_version)")
-          INTEGRITY=$(npm view "$PKG_NAME@$PKG_VERSION" dist.integrity)
+          NPM_VIEW_STATUS=1
+          for attempt in $(seq 1 40); do
+            set +e
+            npm view "$PKG_NAME@$PKG_VERSION" dist.integrity >/tmp/npm-integrity 2>/tmp/npm-view.err
+            NPM_VIEW_STATUS=$?
+            set -e
+            [ "$NPM_VIEW_STATUS" -eq 0 ] && break
+            if ! grep -q 'npm error code E404' /tmp/npm-view.err; then
+              echo '::error::npm view failed with a non-E404 error; refusing to verify the published package'
+              cat /tmp/npm-view.err >&2
+              exit 1
+            fi
+            if [ "$attempt" -lt 40 ]; then
+              echo "::notice::registry read-back attempt $attempt/40 has not resolved yet"
+              sleep 15
+            fi
+          done
+          [ "$NPM_VIEW_STATUS" -eq 0 ] || { echo '::error::npm package is not visible after a successful publish'; exit 1; }
+          INTEGRITY=$(cat /tmp/npm-integrity)
           ACTUAL=$(node -e "const {createHash}=require('node:crypto'); console.log('sha512-'+createHash('sha512').update(require('node:fs').readFileSync('release.tgz')).digest('base64'))")
           test "$INTEGRITY" = "$ACTUAL" || { echo '::error::existing npm package integrity differs from staged tarball'; exit 1; }
       - name: Report npm publish skipped
