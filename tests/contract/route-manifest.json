@@ -2,6 +2,22 @@
   "schemaVersion": 1,
   "routes": [
     {
+      "id": "github-api.actions-secrets.public-key",
+      "service": "github-api",
+      "method": "GET",
+      "path": "/repos/{param}/{param}/actions/secrets/public-key",
+      "classification": "intentionally-unsimulated",
+      "reason": "Fetches the repository public key used for GitHub Actions secret encryption. The route is covered with an injected fetcher; a committed live cassette would contain repository identity and authenticated API traffic."
+    },
+    {
+      "id": "github-api.actions-secrets.write",
+      "service": "github-api",
+      "method": "PUT",
+      "path": "/repos/{param}/{param}/actions/secrets/{param}",
+      "classification": "intentionally-unsimulated",
+      "reason": "Writes sealed-box encrypted repository Actions secrets. The route is covered with an injected fetcher, including ordered writes, redacted failures, and partial success; live cassettes would mutate repository credentials."
+    },
+    {
       "id": "postman-api.service-account-tokens.mint",
       "service": "postman-api",
       "method": "POST",

@@ -1,10 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import {
-  createNodeExecFile,
-  runResolveServiceToken,
-  type ResolveDependencies
-} from '../src/index.js';
+import { runResolveServiceToken, type ResolveDependencies } from '../src/index.js';
 
 function expectNoTerminalControls(text: string): void {
   for (let i = 0; i < text.length; i += 1) {
@@ -42,17 +38,60 @@ function createCore() {
   };
 }
 
+interface HttpReceipt {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+}
+
+function createHttpReceipt(url: string | URL, init?: RequestInit): HttpReceipt {
+  const body = typeof init?.body === 'string' ? init.body : undefined;
+  return {
+    url: String(url),
+    method: init?.method ?? 'GET',
+    headers: Object.fromEntries(new Headers(init?.headers).entries()),
+    ...(body === undefined ? {} : { body })
+  };
+}
+
+function parseSecretBody(receipt: HttpReceipt): { encrypted_value: string; key_id: string } {
+  const parsed: unknown = JSON.parse(receipt.body ?? '');
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Expected a JSON object request body');
+  }
+  const record = parsed as Record<string, unknown>;
+  if (typeof record.encrypted_value !== 'string' || typeof record.key_id !== 'string') {
+    throw new Error('Expected encrypted_value and key_id strings');
+  }
+  expect(Object.keys(record).sort()).toEqual(['encrypted_value', 'key_id']);
+  return { encrypted_value: record.encrypted_value, key_id: record.key_id };
+}
+
+async function captureError(promise: Promise<unknown>): Promise<string> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  return caught instanceof Error ? caught.message : String(caught);
+}
+
 describe('runResolveServiceToken', () => {
-  test('passes through an existing token and team ID without network calls', async () => {
+  test('passes through an existing token and team ID with write=false and makes no Postman or GitHub calls', async () => {
     const harness = createCore();
     const rawTeamId = 'team-123\r\nextra';
     const dependencies: ResolveDependencies = {
       core: harness.core,
+      env: {
+        GITHUB_REPOSITORY: 'postman-cs/example',
+        GITHUB_API_URL: 'https://github.example/api/v3',
+        UNRELATED_CREDENTIAL: 'must-not-be-exposed'
+      },
       fetcher: async () => {
         throw new Error('fetch should not be called');
-      },
-      execFile: async () => {
-        throw new Error('exec should not be called');
       }
     };
 
@@ -97,9 +136,6 @@ describe('runResolveServiceToken', () => {
           return new Response(JSON.stringify({ session: { token: 'minted-token' } }), { status: 201 });
         }
         return new Response(JSON.stringify({ user: { teamId: 'team-456' } }), { status: 200 });
-      },
-      execFile: async () => {
-        throw new Error('exec should not be called');
       }
     };
 
@@ -139,279 +175,227 @@ describe('runResolveServiceToken', () => {
     expect(harness.secrets).toEqual(['minted-token']);
   });
 
-  test('writes resolved values through gh when secret persistence is enabled', async () => {
+  test.each([
+    ['the default GitHub API URL', undefined, 'https://api.github.com'],
+    ['a custom GITHUB_API_URL', 'https://github.example/api/v3/', 'https://github.example/api/v3']
+  ])('uses REST sealed-box persistence with %s', async (_label, githubApiUrl, expectedApiUrl) => {
     const harness = createCore();
-    const rawAccessSecret = 'CUSTOM_TOKEN\r\nlabel';
-    const rawTeamSecret = 'CUSTOM_TEAM\nlabel';
-    const execCalls: Array<{ file: string; args: string[]; options?: { env?: NodeJS.ProcessEnv; input?: string } }> = [];
+    const receipts: HttpReceipt[] = [];
+    const githubToken = 'ghp-REST-SECRET';
+    const accessToken = 'existing-token-REST';
+    const teamId = 'team-REST';
+    const publicKey = Buffer.alloc(32, 7).toString('base64');
     const dependencies: ResolveDependencies = {
       core: harness.core,
-      env: { GITHUB_REPOSITORY: 'postman-cs/example' },
-      fetcher: async () => {
-        throw new Error('fetch should not be called');
+      env: {
+        GITHUB_REPOSITORY: 'postman-cs/example',
+        ...(githubApiUrl ? { GITHUB_API_URL: githubApiUrl } : {}),
+        UNRELATED_CREDENTIAL: 'unrelated-env-secret'
       },
-      execFile: async (file, args, options) => {
-        execCalls.push({ file, args, options });
-        return { stdout: '', stderr: '' };
+      fetcher: async (url, init) => {
+        receipts.push(createHttpReceipt(url, init));
+        if (receipts.length === 1) {
+          return new Response(JSON.stringify({ key_id: 'key-id-123', key: publicKey }), { status: 200 });
+        }
+        return receipts.length === 2
+          ? new Response('', { status: 201 })
+          : new Response(null, { status: 204 });
       }
     };
 
     await runResolveServiceToken({
-      postmanAccessToken: 'existing-token',
-      postmanTeamId: 'team-123',
+      postmanAccessToken: accessToken,
+      postmanTeamId: teamId,
       postmanRegion: 'us',
       postmanStack: 'prod',
       writeGithubSecret: true,
-      githubToken: 'ghp-token',
-      accessTokenSecretName: rawAccessSecret,
-      teamIdSecretName: rawTeamSecret
+      githubToken,
+      accessTokenSecretName: 'CUSTOM_TOKEN',
+      teamIdSecretName: 'CUSTOM_TEAM'
     }, dependencies);
 
-    expect(execCalls).toEqual([
-      { file: 'gh', args: ['--version'], options: undefined },
-      {
-        file: 'gh',
-        args: ['secret', 'set', rawAccessSecret, '--repo', 'postman-cs/example'],
-        options: { env: expect.objectContaining({ GH_TOKEN: 'ghp-token' }), input: 'existing-token' }
-      },
-      {
-        file: 'gh',
-        args: ['secret', 'set', rawTeamSecret, '--repo', 'postman-cs/example'],
-        options: { env: expect.objectContaining({ GH_TOKEN: 'ghp-token' }), input: 'team-123' }
-      }
+    expect(receipts.map(({ method, url }) => ({ method, url }))).toEqual([
+      { method: 'GET', url: `${expectedApiUrl}/repos/postman-cs/example/actions/secrets/public-key` },
+      { method: 'PUT', url: `${expectedApiUrl}/repos/postman-cs/example/actions/secrets/CUSTOM_TOKEN` },
+      { method: 'PUT', url: `${expectedApiUrl}/repos/postman-cs/example/actions/secrets/CUSTOM_TEAM` }
     ]);
-    const wroteInfo = harness.infos.find((line) => line.startsWith('Wrote secrets:'));
-    expect(wroteInfo).toBe('Wrote secrets: CUSTOM_TOKEN label, CUSTOM_TEAM label');
-    expect(wroteInfo).not.toContain('\n');
-    expect(wroteInfo).not.toContain('\r');
-  });
-
-  test('gh probe failure includes safe cause and installation remediation', async () => {
-    const harness = createCore();
-    const ghToken = 'ghp-PROBE-SECRET';
-    const accessToken = 'existing-token-PROBE';
-    const dependencies: ResolveDependencies = {
-      core: harness.core,
-      env: { GITHUB_REPOSITORY: 'postman-cs/example' },
-      fetcher: async () => {
-        throw new Error('fetch should not be called');
-      },
-      execFile: async () => {
-        throw new Error(`spawn gh ENOENT\npath detail with ${ghToken}`);
-      }
-    };
-
-    let errorMessage = '';
-    try {
-      await runResolveServiceToken({
-        postmanAccessToken: accessToken,
-        postmanTeamId: 'team-123',
-        writeGithubSecret: true,
-        githubToken: ghToken,
-        accessTokenSecretName: 'POSTMAN_ACCESS_TOKEN',
-        teamIdSecretName: 'POSTMAN_TEAM_ID'
-      }, dependencies);
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : String(error);
+    expect(receipts[0]?.headers).toEqual({
+      accept: 'application/vnd.github+json',
+      authorization: `Bearer ${githubToken}`,
+      'x-github-api-version': '2022-11-28'
+    });
+    expect(receipts[0]?.body).toBeUndefined();
+    for (const receipt of receipts.slice(1)) {
+      expect(receipt.headers).toEqual({
+        accept: 'application/vnd.github+json',
+        authorization: `Bearer ${githubToken}`,
+        'content-type': 'application/json',
+        'x-github-api-version': '2022-11-28'
+      });
     }
 
-    expect(errorMessage).toContain('gh CLI not found on runner');
-    expect(errorMessage).toContain('ENOENT');
-    expect(errorMessage).toMatch(/install it before invoking|GitHub-hosted runners/);
-    expect(errorMessage).not.toContain('\n');
-    expect(errorMessage).not.toContain(ghToken);
-    expect(errorMessage).not.toContain(accessToken);
+    const accessBody = parseSecretBody(receipts[1] ?? { url: '', method: '', headers: {} });
+    const teamBody = parseSecretBody(receipts[2] ?? { url: '', method: '', headers: {} });
+    expect(accessBody.key_id).toBe('key-id-123');
+    expect(teamBody.key_id).toBe('key-id-123');
+    for (const [body, plaintext] of [[accessBody, accessToken], [teamBody, teamId]] as const) {
+      expect(body.encrypted_value).toMatch(/^[A-Za-z0-9+/]+={0,2}$/);
+      expect(body.encrypted_value).not.toBe(plaintext);
+      expect(Buffer.from(body.encrypted_value, 'base64').length).toBeGreaterThan(Buffer.byteLength(plaintext));
+      expect(Buffer.from(body.encrypted_value, 'base64').toString('utf8')).not.toContain(plaintext);
+    }
+    const serializedReceipts = JSON.stringify(receipts);
+    expect(serializedReceipts).not.toContain(accessToken);
+    expect(serializedReceipts).not.toContain(teamId);
+    expect(serializedReceipts).not.toContain('unrelated-env-secret');
+    expect(harness.infos).toContain('Wrote secrets: CUSTOM_TOKEN, CUSTOM_TEAM');
   });
 
-  test('first secret write failure names repository, secret, cause, and secrets-write remediation', async () => {
-    const harness = createCore();
-    const ghToken = 'ghp-FIRST-WRITE-SECRET';
-    const accessToken = 'existing-token-FIRST';
-    const rawRepo = 'postman-cs/example\r\nextra\u001b[31m';
-    const rawAccessSecret = 'CUSTOM_TOKEN\nlabel\u0007';
-    const execCalls: string[][] = [];
-    let call = 0;
-    const dependencies: ResolveDependencies = {
-      core: harness.core,
-      env: { GITHUB_REPOSITORY: rawRepo },
-      fetcher: async () => {
-        throw new Error('fetch should not be called');
-      },
-      execFile: async (_file, args) => {
-        execCalls.push(args);
-        call += 1;
-        if (call === 1) return { stdout: '', stderr: '' };
-        throw new Error(`HTTP 403: Resource not accessible by integration\n${ghToken}\u001b[0m`);
-      }
-    };
+  test.each([
+    ['leading-dash', '-TOKEN'],
+    ['env-file-shaped', '--env-file=/tmp/secrets'],
+    ['reserved', 'github_custom'],
+    ['numeric-leading', '1TOKEN']
+  ])('rejects %s secret names in both inputs before Postman or GitHub calls', async (_label, invalidName) => {
+    for (const field of ['accessTokenSecretName', 'teamIdSecretName'] as const) {
+      const harness = createCore();
+      let fetchCalls = 0;
+      const inputs = {
+        postmanApiKey: 'pmak-must-not-be-used',
+        postmanRegion: 'us',
+        postmanStack: 'prod',
+        writeGithubSecret: true,
+        githubToken: 'ghp-must-not-be-used',
+        accessTokenSecretName: 'CUSTOM_TOKEN',
+        teamIdSecretName: 'CUSTOM_TEAM',
+        [field]: invalidName
+      };
+      const message = await captureError(runResolveServiceToken(inputs, {
+        core: harness.core,
+        env: { GITHUB_REPOSITORY: 'postman-cs/example' },
+        fetcher: async () => {
+          fetchCalls += 1;
+          throw new Error('network should not be called');
+        }
+      }));
 
-    let errorMessage = '';
-    try {
-      await runResolveServiceToken({
-        postmanAccessToken: accessToken,
+      expect(message).toContain(field === 'accessTokenSecretName'
+        ? 'access-token-secret-name'
+        : 'team-id-secret-name');
+      expect(fetchCalls).toBe(0);
+      expect(harness.outputs).toEqual({});
+    }
+  });
+
+  test.each(['owner', '/repo', 'owner/', 'owner/repo/extra', ' owner/repo'])(
+    'rejects malformed GITHUB_REPOSITORY %j before a GitHub call',
+    async (repository) => {
+      const harness = createCore();
+      let fetchCalls = 0;
+      const message = await captureError(runResolveServiceToken({
+        postmanAccessToken: 'existing-token',
         postmanTeamId: 'team-123',
         writeGithubSecret: true,
-        githubToken: ghToken,
-        accessTokenSecretName: rawAccessSecret,
+        githubToken: 'ghp-must-not-be-used',
+        accessTokenSecretName: 'CUSTOM_TOKEN',
         teamIdSecretName: 'CUSTOM_TEAM'
-      }, dependencies);
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : String(error);
+      }, {
+        core: harness.core,
+        env: { GITHUB_REPOSITORY: repository },
+        fetcher: async () => {
+          fetchCalls += 1;
+          throw new Error('network should not be called');
+        }
+      }));
+
+      expect(message).toContain('GITHUB_REPOSITORY');
+      expect(fetchCalls).toBe(0);
     }
+  );
 
-    expect(execCalls).toEqual([
-      ['--version'],
-      ['secret', 'set', rawAccessSecret, '--repo', rawRepo]
-    ]);
-    expect(errorMessage).toContain('Failed to write GitHub secret CUSTOM_TOKEN label');
-    expect(errorMessage).toContain('postman-cs/example extra');
-    expect(errorMessage).toContain('HTTP 403');
-    expect(errorMessage).toMatch(/secrets-write/);
-    expectNoTerminalControls(errorMessage);
-    expect(errorMessage).not.toContain(ghToken);
-    expect(errorMessage).not.toContain(accessToken);
-    expect(errorMessage).not.toContain('Partial success');
-  });
-
-  test('createNodeExecFile bounds retained child output while draining streams', async () => {
-    const execFile = createNodeExecFile();
-    const overCap = 8 * 1024 + 4096;
+  test('redacts credentials from a first GitHub secret PUT failure', async () => {
     const harness = createCore();
-    // Markers are constructed at runtime so they do not appear as literals in argv.
-    const headMarker = ['STREAM', 'HEAD'].join('-');
-    const tailMarker = ['STREAM', 'TAIL'].join('-');
-
-    let failMessage = '';
-    try {
-      await execFile(process.execPath, [
-        '-e',
-        [
-          "const head=['STREAM','HEAD'].join('-');",
-          "const tail=['STREAM','TAIL'].join('-');",
-          'process.stderr.write(head);',
-          "process.stderr.write('\\u001b[31m');",
-          `process.stderr.write('x'.repeat(${overCap}));`,
-          'process.stderr.write(tail);',
-          'process.exit(2);'
-        ].join('')
-      ]);
-    } catch (error) {
-      failMessage = error instanceof Error ? error.message : String(error);
-    }
-
-    expect(failMessage).toContain(headMarker);
-    expect(failMessage).toContain('[truncated]');
-    expect(failMessage).not.toContain(tailMarker);
-    expect(Buffer.byteLength(failMessage)).toBeLessThanOrEqual(
-      'Command failed with exit code 2: '.length + 8 * 1024 + '...[truncated]'.length
-    );
-
-    const success = await execFile(process.execPath, [
-      '-e',
-      [
-        "const head=['STREAM','HEAD'].join('-');",
-        "const tail=['STREAM','TAIL'].join('-');",
-        'process.stdout.write(head);',
-        `process.stdout.write('y'.repeat(${overCap}));`,
-        'process.stdout.write(tail);'
-      ].join('')
-    ]);
-    expect(success.stdout).toContain(headMarker);
-    expect(success.stdout).toContain('[truncated]');
-    expect(success.stdout).not.toContain(tailMarker);
-    expect(Buffer.byteLength(success.stdout)).toBeLessThanOrEqual(8 * 1024 + '...[truncated]'.length);
-
-    // Operator-facing path: real createNodeExecFile failure is sanitized to one safe line.
-    const operatorExec = createNodeExecFile();
+    const receipts: HttpReceipt[] = [];
+    const githubToken = 'ghp-FIRST-WRITE-SECRET';
+    const accessToken = 'existing-token-FIRST';
+    const postmanApiKey = 'pmak-FIRST-WRITE-SECRET';
     const dependencies: ResolveDependencies = {
       core: harness.core,
       env: { GITHUB_REPOSITORY: 'postman-cs/example' },
-      fetcher: async () => {
-        throw new Error('fetch should not be called');
-      },
-      execFile: async (_file, args, options) => {
-        if (args[0] === '--version') return { stdout: '', stderr: '' };
-        return operatorExec(
-          process.execPath,
-          [
-            '-e',
-            [
-              "const head=['STREAM','HEAD'].join('-');",
-              "const tail=['STREAM','TAIL'].join('-');",
-              "process.stderr.write(head + '\\u001b[31m');",
-              `process.stderr.write('z'.repeat(${overCap}));`,
-              'process.stderr.write(tail);',
-              'process.exit(1);'
-            ].join('')
-          ],
-          options
+      fetcher: async (url, init) => {
+        receipts.push(createHttpReceipt(url, init));
+        if (receipts.length === 1) {
+          return new Response(JSON.stringify({
+            key_id: 'key-id-123',
+            key: Buffer.alloc(32, 11).toString('base64')
+          }), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({ message: `denied ${githubToken} ${accessToken} ${postmanApiKey}\nsecond line` }),
+          { status: 403 }
         );
       }
     };
 
-    let operatorMessage = '';
-    try {
-      await runResolveServiceToken({
-        postmanAccessToken: 'existing-token-BOUND',
-        postmanTeamId: 'team-123',
-        writeGithubSecret: true,
-        githubToken: 'ghp-BOUND-SECRET',
-        accessTokenSecretName: 'CUSTOM_TOKEN',
-        teamIdSecretName: 'CUSTOM_TEAM'
-      }, dependencies);
-    } catch (error) {
-      operatorMessage = error instanceof Error ? error.message : String(error);
-    }
+    const errorMessage = await captureError(runResolveServiceToken({
+      postmanApiKey,
+      postmanAccessToken: accessToken,
+      postmanTeamId: 'team-123',
+      writeGithubSecret: true,
+      githubToken,
+      accessTokenSecretName: 'CUSTOM_TOKEN',
+      teamIdSecretName: 'CUSTOM_TEAM'
+    }, dependencies));
 
-    expect(operatorMessage).toContain('Failed to write GitHub secret CUSTOM_TOKEN');
-    expect(operatorMessage).toContain(headMarker);
-    expect(operatorMessage).toContain('Command failed');
-    // Raw exec path above asserts the retention truncation marker; here the 200-char
-    // diagnostic cause window keeps the head marker and drops the over-cap tail.
-    expect(operatorMessage).not.toContain(tailMarker);
-    expect(operatorMessage).toMatch(/secrets-write/);
-    expectNoTerminalControls(operatorMessage);
-    expect(operatorMessage).not.toContain('ghp-BOUND-SECRET');
-    expect(operatorMessage).not.toContain('existing-token-BOUND');
+    expect(receipts.map(({ method }) => method)).toEqual(['GET', 'PUT']);
+    expect(errorMessage).toContain('Failed to write GitHub secret CUSTOM_TOKEN');
+    expect(errorMessage).toContain('postman-cs/example');
+    expect(errorMessage).toContain('HTTP 403');
+    expect(errorMessage).toMatch(/secrets-write/);
+    expect(errorMessage).not.toContain('Partial success');
+    expectNoTerminalControls(errorMessage);
+    expect(errorMessage).not.toContain(githubToken);
+    expect(errorMessage).not.toContain(accessToken);
+    expect(errorMessage).not.toContain(postmanApiKey);
   });
 
-  test('second secret write failure reports partial success without leaking token values', async () => {
+  test('second REST secret PUT failure reports access-token-first partial success without leaking plaintext', async () => {
     const harness = createCore();
     const ghToken = 'ghp-SECOND-WRITE-SECRET';
     const accessToken = 'existing-token-SECOND';
-    const execCalls: string[][] = [];
+    const receipts: HttpReceipt[] = [];
     const dependencies: ResolveDependencies = {
       core: harness.core,
       env: { GITHUB_REPOSITORY: 'postman-cs/example' },
-      fetcher: async () => {
-        throw new Error('fetch should not be called');
-      },
-      execFile: async (_file, args) => {
-        execCalls.push(args);
-        if (args[0] === '--version') return { stdout: '', stderr: '' };
-        if (args.includes('CUSTOM_TOKEN')) return { stdout: '', stderr: '' };
-        throw new Error(`HTTP 403: denied writing team secret\nleak ${ghToken} ${accessToken}`);
+      fetcher: async (url, init) => {
+        receipts.push(createHttpReceipt(url, init));
+        if (receipts.length === 1) {
+          return new Response(JSON.stringify({
+            key_id: 'key-id-123',
+            key: Buffer.alloc(32, 13).toString('base64')
+          }), { status: 200 });
+        }
+        if (receipts.length === 2) return new Response('', { status: 201 });
+        return new Response(
+          JSON.stringify({ message: `denied ${ghToken} ${accessToken}\nsecond line` }),
+          { status: 403 }
+        );
       }
     };
 
-    let errorMessage = '';
-    try {
-      await runResolveServiceToken({
-        postmanAccessToken: accessToken,
-        postmanTeamId: 'team-123',
-        writeGithubSecret: true,
-        githubToken: ghToken,
-        accessTokenSecretName: 'CUSTOM_TOKEN',
-        teamIdSecretName: 'CUSTOM_TEAM'
-      }, dependencies);
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : String(error);
-    }
+    const errorMessage = await captureError(runResolveServiceToken({
+      postmanAccessToken: accessToken,
+      postmanTeamId: 'team-123',
+      writeGithubSecret: true,
+      githubToken: ghToken,
+      accessTokenSecretName: 'CUSTOM_TOKEN',
+      teamIdSecretName: 'CUSTOM_TEAM'
+    }, dependencies));
 
-    expect(execCalls).toEqual([
-      ['--version'],
-      ['secret', 'set', 'CUSTOM_TOKEN', '--repo', 'postman-cs/example'],
-      ['secret', 'set', 'CUSTOM_TEAM', '--repo', 'postman-cs/example']
+    expect(receipts.map(({ method, url }) => ({ method, url }))).toEqual([
+      { method: 'GET', url: 'https://api.github.com/repos/postman-cs/example/actions/secrets/public-key' },
+      { method: 'PUT', url: 'https://api.github.com/repos/postman-cs/example/actions/secrets/CUSTOM_TOKEN' },
+      { method: 'PUT', url: 'https://api.github.com/repos/postman-cs/example/actions/secrets/CUSTOM_TEAM' }
     ]);
     expect(errorMessage).toContain('Partial success');
     expect(errorMessage).toContain('CUSTOM_TOKEN');
@@ -434,8 +418,7 @@ describe('runResolveServiceToken', () => {
       teamIdSecretName: 'POSTMAN_TEAM_ID'
     }, {
       core: harness.core,
-      fetcher: fetch,
-      execFile: async () => ({ stdout: '', stderr: '' })
+      fetcher: fetch
     })).rejects.toThrow('postman-api-key is required when postman-access-token is not provided.');
   });
 
@@ -450,9 +433,6 @@ describe('runResolveServiceToken', () => {
           return new Response(JSON.stringify({ session: { token: 'minted-token' } }), { status: 201 });
         }
         return new Response(JSON.stringify({ user: { teamId: 'team-eu' } }), { status: 200 });
-      },
-      execFile: async () => {
-        throw new Error('exec should not be called');
       }
     };
 

@@ -1,5 +1,4 @@
 import {
-  createNodeExecFile,
   readInputsFromEnv,
   runResolveServiceToken,
   type CoreLike
@@ -108,7 +107,6 @@ async function main(argv: string[] = process.argv): Promise<void> {
   await runResolveServiceToken(readInputsFromEnv(env), {
     core: cliCore,
     fetcher: fetch,
-    execFile: createNodeExecFile(env),
     env
   });
   process.stdout.write(`${JSON.stringify(outputs, null, 2)}\n`);

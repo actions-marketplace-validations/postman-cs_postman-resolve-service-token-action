@@ -22,13 +22,15 @@ function recordingSink(): { sink: LogSink; lines: string[] } {
   };
 }
 
-function stubCore(): CoreLike & { outputs: Record<string, string>; secrets: string[] } {
+function stubCore(): CoreLike & { outputs: Record<string, string>; secrets: string[]; infos: string[] } {
   const outputs: Record<string, string> = {};
   const secrets: string[] = [];
+  const infos: string[] = [];
   return {
     outputs,
     secrets,
-    info: () => {},
+    infos,
+    info: (message) => infos.push(message),
     warning: () => {},
     setOutput: (name, value) => {
       outputs[name] = value;
@@ -41,6 +43,35 @@ function stubCore(): CoreLike & { outputs: Record<string, string>; secrets: stri
 
 const PMAK = 'PMAK-testkeyvalue-0123456789';
 const MINTED = 'minted-access-token-abcdef';
+const UNSAFE_DIAGNOSTIC_CONTROLS = [
+  '\u2028', // line separator
+  '\u2029', // paragraph separator
+  '\u202a', // left-to-right embedding
+  '\u202b', // right-to-left embedding
+  '\u202c', // pop directional formatting
+  '\u202d', // left-to-right override
+  '\u202e', // right-to-left override
+  '\u2066', // left-to-right isolate
+  '\u2067', // right-to-left isolate
+  '\u2068', // first-strong isolate
+  '\u2069', // pop directional isolate
+  '\u200b', // zero-width space
+  '\u200c', // zero-width non-joiner
+  '\u200d', // zero-width joiner
+  '\u2060', // word joiner
+  '\ufeff' // zero-width no-break space
+] as const;
+
+function controlSeparatedWords(): { unsafe: string; normalized: string } {
+  const words = Array.from({ length: UNSAFE_DIAGNOSTIC_CONTROLS.length + 1 }, (_, index) => `s${index}`);
+  return {
+    unsafe: UNSAFE_DIAGNOSTIC_CONTROLS.reduce(
+      (value, control, index) => `${value}${control}s${index + 1}`,
+      's0'
+    ),
+    normalized: words.join(' ')
+  };
+}
 
 function baseInputs(overrides: Partial<ResolveInputs> = {}): ResolveInputs {
   return {
@@ -80,7 +111,6 @@ describe('resolve-service-token logging', () => {
     await runResolveServiceToken(baseInputs(), {
       core,
       fetcher: fetcher as never,
-      execFile: async () => ({ stdout: '', stderr: '' }),
       env: {},
       logger
     });
@@ -102,7 +132,6 @@ describe('resolve-service-token logging', () => {
       runResolveServiceToken(baseInputs(), {
         core: stubCore(),
         fetcher: fetcher as never,
-        execFile: async () => ({ stdout: '', stderr: '' }),
         env: {},
         logger
       })
@@ -128,7 +157,6 @@ describe('resolve-service-token logging', () => {
       runResolveServiceToken(baseInputs(), {
         core: stubCore(),
         fetcher: fetcher as never,
-        execFile: async () => ({ stdout: '', stderr: '' }),
         env: {},
         logger
       })
@@ -138,6 +166,73 @@ describe('resolve-service-token logging', () => {
     expect(all).toContain('connect ECONNREFUSED');
     expect(all).toContain('caused by');
     expect(all).toContain('getaddrinfo failed');
+  });
+
+  it('normalizes Unicode separators and formatting controls in public failure diagnostics', async () => {
+    const { unsafe, normalized } = controlSeparatedWords();
+    const internationalText = 'café 東京 नमस्ते';
+    const unsafeDetail = `${unsafe} ${internationalText}`;
+    const expectedDetail = `${normalized} ${internationalText}`;
+    const { sink, lines } = recordingSink();
+    const logger = createLogger({ sink, level: 'debug' });
+    const fetcher = vi.fn(async (url: string) =>
+      String(url).includes('service-account-tokens')
+        ? jsonResponse({ session: { token: MINTED } })
+        : jsonResponse({ message: unsafeDetail }, { status: 500, requestId: 'req-unicode' })
+    );
+
+    const error = await runResolveServiceToken(baseInputs(), {
+      core: stubCore(),
+      fetcher: fetcher as never,
+      env: {},
+      logger
+    }).then(
+      () => undefined,
+      (reason: unknown) => reason
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    const errorMessage = (error as Error).message;
+    const loggedDiagnostics = lines.join('\n');
+    expect(errorMessage).toContain(`: {"message":"${expectedDetail}"}. Verify the access token`);
+    expect(loggedDiagnostics).toContain(expectedDetail);
+    for (const control of UNSAFE_DIAGNOSTIC_CONTROLS) {
+      expect(errorMessage).not.toContain(control);
+      expect(loggedDiagnostics).not.toContain(control);
+    }
+  });
+
+  it('emits a one-line identity while preserving printable international text', async () => {
+    const { unsafe, normalized } = controlSeparatedWords();
+    const internationalText = 'François 東京 مرحبا';
+    const core = stubCore();
+    const fetcher = vi.fn(async (url: string) =>
+      String(url).includes('service-account-tokens')
+        ? jsonResponse({ session: { token: MINTED } })
+        : jsonResponse({
+            user: {
+              teamId: 'équipe-東京',
+              id: 'utilisateur-42',
+              fullName: `${unsafe} ${internationalText}`
+            }
+          })
+    );
+
+    await runResolveServiceToken(baseInputs(), {
+      core,
+      fetcher: fetcher as never,
+      env: {}
+    });
+
+    const expectedLine =
+      `resolve-service-token: minted access token for team équipe-東京 ` +
+      `(user utilisateur-42 ${normalized} ${internationalText})`;
+    expect(core.infos).toContain(expectedLine);
+    const identityLine = core.infos.find((line) => line.startsWith('resolve-service-token:'));
+    expect(identityLine).toBe(expectedLine);
+    for (const control of UNSAFE_DIAGNOSTIC_CONTROLS) {
+      expect(identityLine).not.toContain(control);
+    }
   });
 
   it('stays quiet at default level and opens up under RUNNER_DEBUG', async () => {
@@ -152,7 +247,6 @@ describe('resolve-service-token logging', () => {
       await runResolveServiceToken(baseInputs(), {
         core,
         fetcher: fetcher as never,
-        execFile: async () => ({ stdout: '', stderr: '' }),
         env,
         logger: createLogger({ sink, env })
       });

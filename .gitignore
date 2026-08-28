@@ -4,5 +4,6 @@ node_modules/
 coverage/
 build/
 dist/
+.plans/
 
 # e2e harness bundle-cache marker (written by onboarding-e2e global-setup)

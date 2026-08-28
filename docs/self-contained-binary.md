@@ -86,11 +86,11 @@ Do not put `--use-env-proxy` in `NODE_OPTIONS`: the SEA deliberately ignores `NO
 | `api.getpostman.com` (US) / `api.eu.postman.com` (EU) | `POST /service-account-tokens` (mint) and `GET /me` (team resolution) |
 | `api.getpostman-beta.com` | Same calls when `--postman-stack beta` is explicitly selected; beta does not support the EU region |
 | `events.pm-cse.dev` | Best-effort anonymous completion telemetry; disable with `POSTMAN_ACTIONS_TELEMETRY=off` or `DO_NOT_TRACK=1` |
-| `api.github.com` | Required only when `--write-github-secret true`; contacted by the separately installed `gh` CLI |
+| `api.github.com` (or the host in `GITHUB_API_URL`) | Required only when `--write-github-secret true`; repository public-key lookup and encrypted secret writes through the GitHub REST Actions Secrets API |
 
 The action does **not** touch the Bifrost/gateway/iapub hosts the sync actions use, and it makes **no runtime tool downloads** on any path. A host with no route to the selected Postman API host cannot mint. Only the package-registry and Node-runtime dependencies are eliminated; Postman connectivity is not.
 
-The optional `--write-github-secret true` path is the exception: it is GitHub-repository specific (writes repo secrets) and additionally requires the `gh` CLI on the agent plus egress to the GitHub API. Leave it off (the default) on non-GitHub agents.
+The optional `--write-github-secret true` path is the exception: it is GitHub-repository specific and requires `GITHUB_REPOSITORY`, a token with repository secrets write permission, and egress to `GITHUB_API_URL` (default `https://api.github.com`). The binary fetches the repository public key, encrypts each value with sealed-box encryption, and writes it through the GitHub REST Actions Secrets API. It does not invoke `gh` or trust executables from `PATH`. Leave it off (the default) on non-GitHub agents.
 
 ## Run
 
@@ -106,7 +106,7 @@ export POSTMAN_ACCESS_TOKEN
 ```
 
 - Pass `--postman-team-id` to skip team resolution when you already know it.
-- `--write-github-secret` / `--access-token-secret-name` / `--github-token` are GitHub-repo specific (need `gh`); omit them on other CI.
+- `--write-github-secret` / `--access-token-secret-name` / `--github-token` are GitHub-repo specific; they require `GITHUB_REPOSITORY`, authorized credentials, and GitHub API egress, but no GitHub CLI. Omit them on other CI.
 
 ## Jenkins pipeline example
 
@@ -165,5 +165,5 @@ pipeline {
 
 - **Platform:** linux-x64 (glibc) only. arm64/Windows/macOS targets are not built yet.
 - **Network:** not air-gapped — requires outbound access to the region-appropriate Postman API host to mint. See [Network requirements](#network-requirements).
-- **`gh` for secret persistence:** `--write-github-secret true` needs the `gh` CLI (the binary bundles Node, not `gh`) plus GitHub API egress. Off by default; leave it off on non-GitHub agents.
+- **Secret persistence:** `--write-github-secret true` uses repository public-key sealed-box encryption and the GitHub REST Actions Secrets API. It requires `GITHUB_REPOSITORY`, an authorized token, and egress to `GITHUB_API_URL` (default `https://api.github.com`), but no GitHub CLI or trusted `PATH`. Off by default; leave it off on non-GitHub agents.
 - **Version:** the embedded `--version` and telemetry version are baked in at build time from the release tag; the versioned filename (`postman-resolve-service-token-<version>-linux-x64`) also carries it.

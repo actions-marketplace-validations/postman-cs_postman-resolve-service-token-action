@@ -74,7 +74,6 @@ describe('mint failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     await expect(runResolveServiceToken({
@@ -103,7 +102,6 @@ describe('mint failure error messages', () => {
         meCalls += 1;
         throw new Error(`transport ${pmak}\r\nPMAK rejected, HTTP 401`);
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let message = '';
@@ -152,7 +150,6 @@ describe('mint failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -187,7 +184,6 @@ describe('mint failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -222,7 +218,6 @@ describe('mint failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -261,7 +256,6 @@ describe('mint failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -306,7 +300,6 @@ describe('mint failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -340,7 +333,6 @@ describe('mint failure error messages', () => {
       fetcher: async () => {
         throw new Error(`connect ECONNREFUSED with ${pmak}`);
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -374,7 +366,6 @@ describe('mint failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -406,7 +397,6 @@ describe('mint failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -444,7 +434,6 @@ describe('/me failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -483,7 +472,6 @@ describe('/me failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -520,7 +508,6 @@ describe('/me failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -562,7 +549,6 @@ describe('/me failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -601,7 +587,6 @@ describe('/me failure error messages', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -647,7 +632,6 @@ describe('identity echo after successful mint', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     const result = await runResolveServiceToken({
@@ -689,7 +673,6 @@ describe('identity echo after successful mint', () => {
         }
         throw new Error('unexpected fetch');
       },
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     await runResolveServiceToken({
@@ -724,7 +707,6 @@ describe('style-ban on mint failure messages', () => {
     const dependencies: ResolveDependencies = {
       core: harness.core,
       fetcher: async () => new Response('{}', { status: 403 }),
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';
@@ -752,7 +734,6 @@ describe('style-ban on mint failure messages', () => {
     const dependencies: ResolveDependencies = {
       core: harness.core,
       fetcher: async () => new Response('service accounts not enabled', { status: 400 }),
-      execFile: async () => ({ stdout: '', stderr: '' })
     };
 
     let errorMessage = '';

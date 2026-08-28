@@ -26,15 +26,15 @@ inputs:
     required: false
     default: prod
   write-github-secret:
-    description: When 'true', writes the resolved token and team ID to repo secrets named by access-token-secret-name and team-id-secret-name. Requires github-token to be a PAT (or GitHub App installation token) with secrets write permission on the target repo. The default GITHUB_TOKEN cannot write repo secrets.
+    description: When 'true', encrypts the resolved token and team ID with the repository public key and writes them through the GitHub REST Actions Secrets API. Requires GITHUB_REPOSITORY, GitHub API egress, and github-token with repository secrets write permission. Honors GITHUB_API_URL and defaults to api.github.com. The default GITHUB_TOKEN cannot write repo secrets.
     required: false
     default: 'false'
   access-token-secret-name:
-    description: Repo secret name to receive the resolved access token. Used only when write-github-secret is 'true'.
+    description: Repo secret name to receive the resolved access token. Use letters, digits, or underscores; do not start with GITHUB_ or a digit. Used only when write-github-secret is 'true'.
     required: false
     default: POSTMAN_ACCESS_TOKEN
   team-id-secret-name:
-    description: Repo secret name to receive the resolved team ID. Used only when write-github-secret is 'true'.
+    description: Repo secret name to receive the resolved team ID. Use letters, digits, or underscores; do not start with GITHUB_ or a digit. Used only when write-github-secret is 'true'.
     required: false
     default: POSTMAN_TEAM_ID
   github-token:

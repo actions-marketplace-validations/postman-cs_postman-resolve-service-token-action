@@ -223,4 +223,22 @@ describe('release workflow contract', () => {
     }
   });
 
+  it('pins every actionlint installer URL to the reviewed immutable revision across CI and release', () => {
+    const installerRevision =
+      /raw\.githubusercontent\.com\/rhysd\/actionlint\/([^/\s]+)\/scripts\/download-actionlint\.bash/g;
+    const revisions = (workflow: string) => [...workflow.matchAll(installerRevision)].map((match) => match[1]!);
+    const expectedRevision = '393031adb9afb225ee52ae2ccd7a5af5525e03e8';
+    const ciRevisions = revisions(ci);
+    const releaseRevisions = revisions(release);
+
+    expect(ciRevisions.length).toBeGreaterThan(0);
+    expect(releaseRevisions.length).toBeGreaterThan(0);
+    for (const revision of [...ciRevisions, ...releaseRevisions]) {
+      expect(revision).not.toBe('main');
+      expect(revision).toMatch(/^[0-9a-f]{40}$/);
+    }
+    expect(new Set(ciRevisions)).toEqual(new Set([expectedRevision]));
+    expect(new Set(releaseRevisions)).toEqual(new Set(ciRevisions));
+  });
+
 });

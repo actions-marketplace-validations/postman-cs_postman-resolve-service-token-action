@@ -1,5 +1,3 @@
-import { spawn } from 'node:child_process';
-
 import {
   createLogger,
   createTelemetryContext,
@@ -7,6 +5,7 @@ import {
   type LogSink,
   type Logger
 } from '@postman-cs/automation-core';
+import sodium from 'libsodium-wrappers';
 import { resolveActionVersion } from './action-version.js';
 import { formatRejectedMint, inspectPmakIdentity, maskPmakDiagnostic } from './pmak-diagnostics.js';
 
@@ -55,23 +54,11 @@ export function coreLogSink(core: CoreLike): LogSink {
   };
 }
 
-export interface ExecFileOptions {
-  env?: NodeJS.ProcessEnv;
-  input?: string;
-}
-
-export interface ExecFileResult {
-  stdout: string;
-  stderr: string;
-}
-
 export type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
-export type ExecFile = (file: string, args: string[], options?: ExecFileOptions) => Promise<ExecFileResult>;
 
 export interface ResolveDependencies {
   core: CoreLike;
   fetcher: Fetcher;
-  execFile: ExecFile;
   env?: NodeJS.ProcessEnv;
   /** Injected by tests; otherwise built over `core` when the run starts. */
   logger?: Logger;
@@ -148,8 +135,6 @@ function createHeaders(entries: Record<string, string | undefined>): Record<stri
 
 const DIAGNOSTIC_DETAIL_MAX = 200;
 const DIAGNOSTIC_VALUE_MAX = 120;
-const EXEC_OUTPUT_CAP_BYTES = 8 * 1024;
-const EXEC_OUTPUT_TRUNCATION_MARKER = '...[truncated]';
 
 const ESC = String.fromCharCode(0x1b);
 const BEL = String.fromCharCode(0x07);
@@ -163,14 +148,16 @@ const CONTROL_CHARS = new RegExp(
     `${Array.from({ length: 0x20 }, (_, i) => `\\u${(0x80 + i).toString(16).padStart(4, '0')}`).join('')}]`,
   'g'
 );
+const UNSAFE_DIAGNOSTIC_FORMATTING = /[\u200b-\u200d\u2028-\u202e\u2060\u2066-\u2069\ufeff]/g;
 
-/** Neutralize ANSI/C0/C1 controls and collapse to a single safe diagnostic line. */
+/** Neutralize controls and visual-formatting hazards, then collapse to one safe diagnostic line. */
 function collapseToOneLine(value: string): string {
   return value
     .replace(ANSI_CSI, ' ')
     .replace(ANSI_OSC, ' ')
     .replace(ANSI_SHORT, ' ')
     .replace(CONTROL_CHARS, ' ')
+    .replace(UNSAFE_DIAGNOSTIC_FORMATTING, ' ')
     .replace(/ +/g, ' ')
     .trim();
 }
@@ -208,38 +195,6 @@ function sanitizeDiagnosticDetail(
     return `${text.slice(0, maxLength)}...`;
   }
   return text;
-}
-
-function createBoundedOutputCollector(capBytes: number): {
-  onData: (chunk: Buffer) => void;
-  finalize: () => string;
-} {
-  const retained: Buffer[] = [];
-  let retainedBytes = 0;
-  let truncated = false;
-
-  return {
-    onData(chunk: Buffer) {
-      // Stream is drained by the data listener even when retention is full.
-      if (retainedBytes >= capBytes) {
-        truncated = true;
-        return;
-      }
-      const remaining = capBytes - retainedBytes;
-      if (chunk.length <= remaining) {
-        retained.push(chunk);
-        retainedBytes += chunk.length;
-        return;
-      }
-      retained.push(chunk.subarray(0, remaining));
-      retainedBytes = capBytes;
-      truncated = true;
-    },
-    finalize() {
-      const text = Buffer.concat(retained, retainedBytes).toString('utf8');
-      return truncated ? `${text}${EXEC_OUTPUT_TRUNCATION_MARKER}` : text;
-    }
-  };
 }
 
 function formatDiagnosticValue(value: string | undefined, maxLength = DIAGNOSTIC_VALUE_MAX): string {
@@ -512,28 +467,120 @@ async function resolveTeamIdAndIdentity(inputs: ResolveInputs, apiHost: string, 
   return identity as MeIdentity & { teamId: string };
 }
 
-async function writeSecret(
-  name: string,
-  value: string,
+const GITHUB_API_VERSION = '2022-11-28';
+const GITHUB_SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const GITHUB_RESERVED_SECRET_PREFIX = /^GITHUB_/i;
+const GITHUB_REPOSITORY = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/;
+
+interface GitHubPublicKey {
+  keyId: string;
+  key: string;
+}
+
+function validateSecretName(inputName: string, secretName: string): void {
+  if (!GITHUB_SECRET_NAME.test(secretName) || GITHUB_RESERVED_SECRET_PREFIX.test(secretName)) {
+    throw new Error(
+      `${inputName} must be a valid GitHub Actions secret name: letters, numbers, and underscores only; it must not begin with a number or the reserved GITHUB_ prefix.`
+    );
+  }
+}
+
+function validatedRepository(env: NodeJS.ProcessEnv): string {
+  const repository = env.GITHUB_REPOSITORY;
+  if (!repository) {
+    throw new Error('GITHUB_REPOSITORY is required when write-github-secret is true.');
+  }
+  if (!GITHUB_REPOSITORY.test(repository)) {
+    throw new Error('GITHUB_REPOSITORY must be exactly owner/repository when write-github-secret is true.');
+  }
+  return repository;
+}
+
+function githubApiBaseUrl(env: NodeJS.ProcessEnv): string {
+  return (normalizeOptional(env.GITHUB_API_URL) ?? 'https://api.github.com').replace(/\/+$/, '');
+}
+
+function githubHeaders(githubToken: string, contentType = false): Record<string, string> {
+  return {
+    Accept: 'application/vnd.github+json',
+    Authorization: `Bearer ${githubToken}`,
+    ...(contentType ? { 'Content-Type': 'application/json' } : {}),
+    'X-GitHub-Api-Version': GITHUB_API_VERSION
+  };
+}
+
+async function githubResponseBody(response: Response): Promise<string> {
+  try {
+    return await response.text();
+  } catch (error) {
+    throw new Error(`GitHub API response body was unreadable: ${sanitizeDiagnosticDetail(error)}`, { cause: error });
+  }
+}
+
+function throwGitHubResponseError(response: Response, body: string): never {
+  const detail = sanitizeDiagnosticDetail(body);
+  throw new Error(`GitHub API request failed (HTTP ${response.status})${detail ? `: ${detail}` : ''}`);
+}
+
+async function getGitHubPublicKey(
+  apiBaseUrl: string,
+  owner: string,
   repository: string,
   githubToken: string,
-  dependencies: ResolveDependencies
+  fetcher: Fetcher
+): Promise<GitHubPublicKey> {
+  const response = await fetcher(
+    `${apiBaseUrl}/repos/${owner}/${repository}/actions/secrets/public-key`,
+    { method: 'GET', headers: githubHeaders(githubToken) }
+  );
+  const body = await githubResponseBody(response);
+  if (!response.ok) throwGitHubResponseError(response, body);
+
+  let payload: unknown;
+  try {
+    payload = body ? JSON.parse(body) : {};
+  } catch (error) {
+    throw new Error(`GitHub public-key response returned malformed JSON: ${sanitizeDiagnosticDetail(error)}`, {
+      cause: error
+    });
+  }
+  const record = getRecord(payload);
+  if (typeof record?.key_id !== 'string' || typeof record.key !== 'string') {
+    throw new Error('GitHub public-key response did not include key_id and key strings.');
+  }
+  return { keyId: record.key_id, key: record.key };
+}
+
+async function encryptGitHubSecret(value: string, publicKey: string): Promise<string> {
+  await sodium.ready;
+  const keyBytes = sodium.from_base64(publicKey, sodium.base64_variants.ORIGINAL);
+  const encrypted = sodium.crypto_box_seal(sodium.from_string(value), keyBytes);
+  return sodium.to_base64(encrypted, sodium.base64_variants.ORIGINAL);
+}
+
+async function putGitHubSecret(
+  apiBaseUrl: string,
+  owner: string,
+  repository: string,
+  name: string,
+  value: string,
+  publicKey: GitHubPublicKey,
+  githubToken: string,
+  fetcher: Fetcher
 ): Promise<void> {
-  await dependencies.execFile('gh', ['secret', 'set', name, '--repo', repository], {
-    env: {
-      ...(dependencies.env ?? process.env),
-      GH_TOKEN: githubToken
-    },
-    input: value
+  const encryptedValue = await encryptGitHubSecret(value, publicKey.key);
+  const response = await fetcher(`${apiBaseUrl}/repos/${owner}/${repository}/actions/secrets/${name}`, {
+    method: 'PUT',
+    headers: githubHeaders(githubToken, true),
+    body: JSON.stringify({ encrypted_value: encryptedValue, key_id: publicKey.keyId })
   });
+  const body = await githubResponseBody(response);
+  if (!response.ok) throwGitHubResponseError(response, body);
 }
 
 async function writeGitHubSecrets(result: ResolveResult, inputs: ResolveInputs, dependencies: ResolveDependencies): Promise<void> {
   const env = dependencies.env ?? process.env;
-  const repository = normalizeOptional(env.GITHUB_REPOSITORY);
-  if (!repository) {
-    throw new Error('GITHUB_REPOSITORY is required when write-github-secret is true.');
-  }
+  const repository = validatedRepository(env);
   if (!inputs.githubToken) {
     throw new Error("github-token is required when write-github-secret is 'true'. The default GITHUB_TOKEN cannot write repo secrets; use a PAT or GitHub App installation token with secrets write permission.");
   }
@@ -544,19 +591,30 @@ async function writeGitHubSecrets(result: ResolveResult, inputs: ResolveInputs, 
   const teamSecretLabel = formatDiagnosticValue(inputs.teamIdSecretName);
   const secretsWriteRemediation =
     'Ensure github-token has secrets-write permission for the repository, then retry.';
+  const apiBaseUrl = githubApiBaseUrl(env);
+  const separator = repository.indexOf('/');
+  const owner = repository.slice(0, separator);
+  const repositoryName = repository.slice(separator + 1);
 
+  let publicKey: GitHubPublicKey;
   try {
-    await dependencies.execFile('gh', ['--version']);
-  } catch (error) {
-    const cause = sanitizeDiagnosticDetail(error, secrets);
-    throw new Error(
-      `gh CLI not found on runner${cause ? ` (${cause})` : ''}. Use a runner image that includes gh (the default GitHub-hosted runners do), or install it before invoking this action.`,
-      { cause: error }
+    publicKey = await getGitHubPublicKey(
+      apiBaseUrl,
+      owner,
+      repositoryName,
+      inputs.githubToken,
+      dependencies.fetcher
     );
-  }
-
-  try {
-    await writeSecret(inputs.accessTokenSecretName, result.token, repository, inputs.githubToken, dependencies);
+    await putGitHubSecret(
+      apiBaseUrl,
+      owner,
+      repositoryName,
+      inputs.accessTokenSecretName,
+      result.token,
+      publicKey,
+      inputs.githubToken,
+      dependencies.fetcher
+    );
   } catch (error) {
     const cause = sanitizeDiagnosticDetail(error, secrets);
     throw new Error(
@@ -566,7 +624,16 @@ async function writeGitHubSecrets(result: ResolveResult, inputs: ResolveInputs, 
   }
 
   try {
-    await writeSecret(inputs.teamIdSecretName, result.teamId, repository, inputs.githubToken, dependencies);
+    await putGitHubSecret(
+      apiBaseUrl,
+      owner,
+      repositoryName,
+      inputs.teamIdSecretName,
+      result.teamId,
+      publicKey,
+      inputs.githubToken,
+      dependencies.fetcher
+    );
   } catch (error) {
     const cause = sanitizeDiagnosticDetail(error, secrets);
     throw new Error(
@@ -578,13 +645,18 @@ async function writeGitHubSecrets(result: ResolveResult, inputs: ResolveInputs, 
   dependencies.core.info(`Wrote secrets: ${accessSecretLabel}, ${teamSecretLabel}`);
 }
 
-function validateInputs(inputs: ResolveInputs): void {
+function validateInputs(inputs: ResolveInputs, env: NodeJS.ProcessEnv): void {
   resolvePostmanApiHost(inputs.postmanStack, inputs.postmanRegion);
   if (!inputs.postmanAccessToken && !inputs.postmanApiKey) {
     throw new Error('postman-api-key is required when postman-access-token is not provided.');
   }
   if (inputs.writeGithubSecret && !inputs.githubToken) {
     throw new Error("github-token is required when write-github-secret is 'true'. The default GITHUB_TOKEN cannot write repo secrets; use a PAT or GitHub App installation token with secrets write permission.");
+  }
+  if (inputs.writeGithubSecret) {
+    validateSecretName('access-token-secret-name', inputs.accessTokenSecretName);
+    validateSecretName('team-id-secret-name', inputs.teamIdSecretName);
+    validatedRepository(env);
   }
 }
 
@@ -637,7 +709,7 @@ async function runResolveServiceTokenInner(inputs: ResolveInputs, dependencies: 
   const logger =
     dependencies.logger ??
     createLogger({ sink: coreLogSink(dependencies.core), env: dependencies.env ?? process.env });
-  validateInputs(inputs);
+  validateInputs(inputs, dependencies.env ?? process.env);
   const apiHost = resolvePostmanApiHost(inputs.postmanStack, inputs.postmanRegion);
   const skipped = Boolean(inputs.postmanAccessToken);
   const token =
@@ -685,58 +757,4 @@ async function runResolveServiceTokenInner(inputs: ResolveInputs, dependencies: 
   }
 
   return result;
-}
-
-export function createNodeExecFile(baseEnv: NodeJS.ProcessEnv = process.env): ExecFile {
-  return (file, args, options) => new Promise((resolve, reject) => {
-    const child = spawn(file, args, {
-      env: options?.env ? { ...baseEnv, ...options.env } : baseEnv,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-    const stdoutCollector = createBoundedOutputCollector(EXEC_OUTPUT_CAP_BYTES);
-    const stderrCollector = createBoundedOutputCollector(EXEC_OUTPUT_CAP_BYTES);
-    let interruptedSignal: NodeJS.Signals | undefined;
-
-    const cleanupSignalHandlers = (): void => {
-      process.off('SIGINT', handleSignal);
-      process.off('SIGTERM', handleSignal);
-    };
-    const handleSignal = (signal: NodeJS.Signals): void => {
-      interruptedSignal = signal;
-      if (!child.killed) {
-        child.kill('SIGTERM');
-      }
-    };
-    process.once('SIGINT', handleSignal);
-    process.once('SIGTERM', handleSignal);
-
-    child.stdout.on('data', (chunk: Buffer) => stdoutCollector.onData(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderrCollector.onData(chunk));
-    child.on('error', (error) => {
-      cleanupSignalHandlers();
-      reject(error);
-    });
-    child.on('close', (code) => {
-      cleanupSignalHandlers();
-      const stdout = stdoutCollector.finalize();
-      const stderr = stderrCollector.finalize();
-      if (interruptedSignal) {
-        reject(new Error(`Command interrupted by ${interruptedSignal}: ${file} ${args.join(' ')}`));
-        return;
-      }
-      if (code && code !== 0) {
-        // Prefer bounded stderr as the cause so operator diagnostics stay intelligible;
-        // fall back to the command line only when the child emitted no stderr.
-        const detail = stderr || `${file} ${args.join(' ')}`;
-        reject(new Error(`Command failed with exit code ${code}: ${detail}`));
-        return;
-      }
-      resolve({ stdout, stderr });
-    });
-
-    if (options?.input !== undefined) {
-      child.stdin.write(options.input);
-    }
-    child.stdin.end();
-  });
 }

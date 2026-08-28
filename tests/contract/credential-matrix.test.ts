@@ -83,10 +83,6 @@ function baseInputs(overrides: Partial<ResolveInputs> = {}): ResolveInputs {
   };
 }
 
-const failingExec: ResolveDependencies['execFile'] = async () => {
-  throw new Error('exec must not be called in these contract cases');
-};
-
 describe('contract: resolve-service-token credential matrix', () => {
   it('{PMAK-only, prod} mints with the x-api-key envelope and resolves team id from /me with Bearer + x-api-key', async () => {
     const platform = createFakePlatform();
@@ -94,8 +90,7 @@ describe('contract: resolve-service-token credential matrix', () => {
 
     const result = await runResolveServiceToken(baseInputs(), {
       core: harness.core,
-      fetcher: platform.fetcher,
-      execFile: failingExec
+      fetcher: platform.fetcher
     });
 
     expect(result).toEqual({ token: 'minted-token', teamId: '10490519', skipped: false });
@@ -122,8 +117,7 @@ describe('contract: resolve-service-token credential matrix', () => {
 
     const result = await runResolveServiceToken(baseInputs(), {
       core: harness.core,
-      fetcher: platform.fetcher,
-      execFile: failingExec
+      fetcher: platform.fetcher
     });
 
     expect(result.token).toBe('session-shaped-token');
@@ -135,8 +129,7 @@ describe('contract: resolve-service-token credential matrix', () => {
 
     const result = await runResolveServiceToken(baseInputs({ postmanStack: 'beta' }), {
       core: harness.core,
-      fetcher: platform.fetcher,
-      execFile: failingExec
+      fetcher: platform.fetcher
     });
 
     expect(result.skipped).toBe(false);
@@ -149,8 +142,7 @@ describe('contract: resolve-service-token credential matrix', () => {
 
     const result = await runResolveServiceToken(baseInputs({ postmanRegion: 'eu' }), {
       core: harness.core,
-      fetcher: platform.fetcher,
-      execFile: failingExec
+      fetcher: platform.fetcher
     });
 
     expect(result.skipped).toBe(false);
@@ -165,8 +157,7 @@ describe('contract: resolve-service-token credential matrix', () => {
         core: harness.core,
         fetcher: async () => {
           throw new Error('fetch must not be called for passthrough');
-        },
-        execFile: failingExec
+        }
       }
     );
 
@@ -181,8 +172,7 @@ describe('contract: resolve-service-token credential matrix', () => {
     try {
       await runResolveServiceToken(baseInputs(), {
         core: harness.core,
-        fetcher: platform.fetcher,
-        execFile: failingExec
+        fetcher: platform.fetcher
       });
     } catch (error) {
       thrown = error;
@@ -203,8 +193,7 @@ describe('contract: resolve-service-token credential matrix', () => {
     await expect(
       runResolveServiceToken(baseInputs(), {
         core: harness.core,
-        fetcher: platform.fetcher,
-        execFile: failingExec
+        fetcher: platform.fetcher
       })
     ).rejects.toThrow(/GET https:\/\/api\.getpostman\.com\/me \(resolve team identity\) response did not include a team id/);
   });

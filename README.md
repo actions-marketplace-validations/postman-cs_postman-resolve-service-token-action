@@ -121,7 +121,7 @@ jobs:
           github-token: ${{ secrets.SECRETS_WRITE_PAT }}
 ```
 
-Writing repo secrets requires `github-token` to be a PAT or GitHub App installation token with secrets write permission on the target repo; the workflow `GITHUB_TOKEN` cannot write repo secrets and will fail. Recommended: a fine-grained PAT scoped to the target repo with **Secrets: Read and write** plus **Metadata: Read**, stored as a separate secret such as `SECRETS_WRITE_PAT`. If your org restricts fine-grained PATs, a short-lived classic PAT with the `repo` scope works as a fallback.
+Writing repo secrets uses the GitHub REST Actions Secrets API: the action fetches the repository public key, encrypts each value with sealed-box encryption, and sends only ciphertext to GitHub. It requires `GITHUB_REPOSITORY`, egress to `GITHUB_API_URL` (default `https://api.github.com`), and `github-token` as a PAT or GitHub App installation token with secrets write permission on the target repo. The workflow `GITHUB_TOKEN` cannot write repo secrets and will fail. Recommended: a fine-grained PAT scoped to the target repo with **Secrets: Read and write** plus **Metadata: Read**, stored as a separate secret such as `SECRETS_WRITE_PAT`. If your org restricts fine-grained PATs, a short-lived classic PAT with the `repo` scope works as a fallback. This path does not invoke `gh` or trust executables from `PATH`.
 
 ### Pass through an existing token
 
@@ -166,7 +166,7 @@ postman-resolve-service-token \
   --write-github-secret false
 ```
 
-Secret persistence via `--write-github-secret true` is GitHub-repo specific and requires `gh`, `GITHUB_REPOSITORY`, and `--github-token`.
+Secret persistence via `--write-github-secret true` is GitHub-repo specific. It requires `GITHUB_REPOSITORY`, `--github-token` with repository secrets write permission, and egress to `GITHUB_API_URL` (default `https://api.github.com`). The binary encrypts values with the repository public key and writes them through the GitHub REST Actions Secrets API; it does not invoke `gh` or trust `PATH`.
 
 ## Inputs
 
@@ -177,9 +177,9 @@ Secret persistence via `--write-github-secret true` is GitHub-repo specific and 
 | `postman-access-token` | Compatibility input for externally rotated Postman access tokens. When provided, minting is skipped, this value is returned via outputs.token, and the action warns because fresh service-account minting is preferred. | no |  |
 | `postman-team-id` | Optional pre-known Postman team ID. When provided, the team ID lookup is skipped and this value is returned via outputs.team-id. Recommended with postman-access-token pass-through. | no |  |
 | `postman-region` | Postman data residency region for public API calls. One of: us or eu. Use the same region as the target Postman team. | no | `us` |
-| `write-github-secret` | When 'true', writes the resolved token and team ID to repo secrets named by access-token-secret-name and team-id-secret-name. Requires github-token to be a PAT (or GitHub App installation token) with secrets write permission on the target repo. The default GITHUB_TOKEN cannot write repo secrets. | no | `false` |
-| `access-token-secret-name` | Repo secret name to receive the resolved access token. Used only when write-github-secret is 'true'. | no | `POSTMAN_ACCESS_TOKEN` |
-| `team-id-secret-name` | Repo secret name to receive the resolved team ID. Used only when write-github-secret is 'true'. | no | `POSTMAN_TEAM_ID` |
+| `write-github-secret` | When 'true', encrypts the resolved token and team ID with the repository public key and writes them through the GitHub REST Actions Secrets API. Requires GITHUB_REPOSITORY, GitHub API egress, and github-token with repository secrets write permission. Honors GITHUB_API_URL and defaults to api.github.com. The default GITHUB_TOKEN cannot write repo secrets. | no | `false` |
+| `access-token-secret-name` | Repo secret name to receive the resolved access token. Use letters, digits, or underscores; do not start with GITHUB_ or a digit. Used only when write-github-secret is 'true'. | no | `POSTMAN_ACCESS_TOKEN` |
+| `team-id-secret-name` | Repo secret name to receive the resolved team ID. Use letters, digits, or underscores; do not start with GITHUB_ or a digit. Used only when write-github-secret is 'true'. | no | `POSTMAN_TEAM_ID` |
 | `github-token` | GitHub PAT or App installation token with secrets write permission on the target repo. Required when write-github-secret is 'true'. | no |  |
 <!-- inputs-table:end -->
 
@@ -211,7 +211,7 @@ mv "$ASSET" postman-resolve-service-token
 POSTMAN_API_KEY="$PMAK" ./postman-resolve-service-token --postman-region us
 ```
 
-Credentials resolve from a CLI flag, then the `INPUT_*` env var, then a plain `POSTMAN_API_KEY` / `POSTMAN_ACCESS_TOKEN` — so Jenkins `withCredentials` works with no flag. Proxy-only agents must set `NODE_USE_ENV_PROXY=1` alongside `HTTP_PROXY` / `HTTPS_PROXY`. This action is the token *minter*: its business calls use the selected Postman API host for `POST /service-account-tokens` and `GET /me`, while best-effort completion telemetry uses `events.pm-cse.dev`. It makes no runtime tool downloads. The `--write-github-secret` path is GitHub-repo specific and additionally needs the `gh` CLI on the agent (the binary bundles Node, not `gh`). Current target is `linux-x64`. Full runbook, credential minting, the complete host allowlist, and a Jenkins pipeline: [Self-contained binary](docs/self-contained-binary.md).
+Credentials resolve from a CLI flag, then the `INPUT_*` env var, then a plain `POSTMAN_API_KEY` / `POSTMAN_ACCESS_TOKEN` — so Jenkins `withCredentials` works with no flag. Proxy-only agents must set `NODE_USE_ENV_PROXY=1` alongside `HTTP_PROXY` / `HTTPS_PROXY`. This action is the token *minter*: its business calls use the selected Postman API host for `POST /service-account-tokens` and `GET /me`, while best-effort completion telemetry uses `events.pm-cse.dev`. It makes no runtime tool downloads. The `--write-github-secret` path directly encrypts values with the repository public key and calls the GitHub REST Actions Secrets API; it needs GitHub API egress, `GITHUB_REPOSITORY`, and an authorized token, but no `gh` CLI or trusted `PATH`. Current target is `linux-x64`. Full runbook, credential minting, the complete host allowlist, and a Jenkins pipeline: [Self-contained binary](docs/self-contained-binary.md).
 
 ## How it works
 
@@ -237,7 +237,7 @@ sequenceDiagram
 
 Both lookups honor explicit overrides: a provided `postman-access-token` or `postman-team-id` is returned verbatim and the corresponding API call is skipped, so existing workflows that manage the token externally can adopt the action incrementally. Passing an existing access token emits a warning because service-account minting is the recommended path.
 
-With `write-github-secret: 'true'` the resolved values are also written back to repo secrets (names configurable via `access-token-secret-name` and `team-id-secret-name`), which lets a scheduled run keep secrets fresh for every other workflow in the repo.
+With `write-github-secret: 'true'` the resolved values are encrypted with the repository public key and written through the GitHub REST Actions Secrets API (names configurable via `access-token-secret-name` and `team-id-secret-name`), which lets a scheduled run keep secrets fresh for every other workflow in the repo.
 
 Releases follow the stable `v1` channel: immutable `v1.x.y` tags for reproducible pins, a rolling `v1` alias for the latest release, and npm publishes with matching versions and provenance.
 

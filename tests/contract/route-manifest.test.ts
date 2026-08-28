@@ -30,7 +30,7 @@ const manifestPath = path.join(repoRoot, 'tests', 'contract', 'route-manifest.js
 
 /**
  * Extraction config for this action. Every call is a plain fetch against the
- * Postman API host, reached through an injected `fetcher`/`fetchImpl` seam.
+ * Postman or GitHub API host, reached through an injected `fetcher`/`fetchImpl` seam.
  *
  * `serviceAliases` is the fail-closed seam: a base-URL expression with no entry
  * here is reported as an unattributed call site and fails the gate.
@@ -38,7 +38,11 @@ const manifestPath = path.join(repoRoot, 'tests', 'contract', 'route-manifest.js
  * because the enclosing function is a fetch adapter, not a route caller.
  */
 export const EXTRACTION_CONFIG = {
-  serviceAliases: { apiHost: 'postman-api', baseUrl: 'postman-api' },
+  serviceAliases: {
+    apiHost: 'postman-api',
+    baseUrl: 'postman-api',
+    apiBaseUrl: 'github-api'
+  },
   allowedPassthroughs: [
     {
       file: 'pmak-diagnostics.ts',
@@ -50,7 +54,7 @@ export const EXTRACTION_CONFIG = {
 } as const;
 
 /** Moves only when the wire surface deliberately changes. */
-const EXPECTED_ROUTE_COUNT = 2;
+const EXPECTED_ROUTE_COUNT = 4;
 
 const tempDirs: string[] = [];
 
@@ -104,10 +108,12 @@ describe('route manifest contract', () => {
     expect(result.extractedRoutes.length).toBe(EXPECTED_ROUTE_COUNT);
   });
 
-  it('RS-RM-003: extraction resolves both routes and leaves nothing unattributed', () => {
+  it('RS-RM-003: extraction resolves every route and leaves nothing unattributed', () => {
     const extraction = extractRoutesFromSource({ sourceRoot, ...EXTRACTION_CONFIG });
     expect(extraction.unattributed).toEqual([]);
     expect(extraction.routes.map((route) => route.id).sort()).toEqual([
+      'github-api GET /repos/{param}/{param}/actions/secrets/public-key',
+      'github-api PUT /repos/{param}/{param}/actions/secrets/{param}',
       'postman-api GET /me',
       'postman-api POST /service-account-tokens'
     ]);
@@ -116,16 +122,27 @@ describe('route manifest contract', () => {
     // same file. Nearest-preceding-binding resolution keeps them distinct; a
     // regression collapses the mint route onto /me.
     const mint = extraction.routes.find((route) => route.id === 'postman-api POST /service-account-tokens');
-    expect(mint?.sources).toEqual(['index.ts:328']);
+    expect(mint?.sources).toEqual(['index.ts:283']);
 
     // /me is reached from the action entry, the memoized identity helper, and
     // the PMAK diagnostic probe (the last nested inside raceAbort(...)).
     const me = extraction.routes.find((route) => route.id === 'postman-api GET /me');
     expect(me?.sources).toEqual([
       'credential-identity.ts:58',
-      'index.ts:435',
+      'index.ts:390',
       'pmak-diagnostics.ts:66'
     ]);
+
+    expect(
+      extraction.routes.find(
+        (route) => route.id === 'github-api GET /repos/{param}/{param}/actions/secrets/public-key'
+      )?.sources
+    ).toEqual(['index.ts:532']);
+    expect(
+      extraction.routes.find(
+        (route) => route.id === 'github-api PUT /repos/{param}/{param}/actions/secrets/{param}'
+      )?.sources
+    ).toEqual(['index.ts:572']);
   });
 });
 
