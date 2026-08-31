@@ -57,6 +57,8 @@ Tags are an **output** of passing run, never input. Never push release tag by ha
 - Conventional-commit type picks bump; `chore`/`ci`/`build`/`test`/`style` alone cut nothing.
 - Release commit lives only on tag. `main` never carries bundled bytes; tag-only commit parents reviewed main SHA and carries `dist/`.
 - `RELEASE_POLICY.md` holds full contract.
+- `main` requires pull requests and green `gate` + `Windows gate` + `build-and-smoke` checks (admins included, no bypass). Merge with `gh pr checks <n> --watch --fail-fast && gh pr merge <n> --merge --delete-branch`; never `--admin`.
+- `.githooks/pre-push` runs typecheck, lint, and test before every branch push.
 
 ## Anti-Patterns
 
