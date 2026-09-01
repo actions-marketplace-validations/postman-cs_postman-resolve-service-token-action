@@ -9,7 +9,7 @@ src/
   index.ts                # Action entry: reads inputs, mints token, sets outputs
   cli.ts                  # CLI adapter; writes JSON/dotenv
   main.ts                 # Core: SA token exchange + team-ID resolution
-  credential-identity.ts  # Session identity derivation (iapub + access token)
+  credential-identity.ts  # iapub session-identity helpers; not referenced by the Action or CLI today
 tests/
 ```
 
@@ -26,7 +26,7 @@ npm run verify:bundle  # build + runtime-shape check
 ## Key Behaviors
 
 - Mints short-lived service-account access token; token = suite's preferred Bifrost/governance credential, can expire, so this action runs first in CI.
-- Resolves team ID by calling `GET /me` w/ minted token, reading team field, walking candidate paths (`credential-identity.ts`, memoized for run).
+- Resolves team ID by calling `GET /me` with the minted token (`resolveTeamIdAndIdentity` in `index.ts`) and reading the team field from the response.
 - `account_type` for this producer always `service` in suite telemetry.
 - Outputs masked before logging; minted token never appears clear in logs or artifacts.
 

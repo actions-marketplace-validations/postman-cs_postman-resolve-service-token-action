@@ -78,6 +78,7 @@ describe('CI dist build contract', () => {
       'typecheck',
       'dist',
       'actionlint',
+      'docs-pins',
       'commitlint'
     ]);
     expect(runGates).toContain('run lint       npm run lint');
@@ -85,6 +86,7 @@ describe('CI dist build contract', () => {
     expect(runGates).toContain('run typecheck  npm run typecheck');
     expect(runGates).toContain('run dist       node scripts/verify-dist-artifact.mjs');
     expect(runGates).toContain('run actionlint "$ACTIONLINT_BIN"');
+    expect(runGates).toContain('run docs-pins  npm run docs:pins');
     expect(runGates).toContain('if [ "${{ github.event_name }}" = "pull_request" ]; then');
     expect(runGates).toContain('run commitlint npx commitlint \\');
     expect(runGates).toContain('--from "${{ github.event.pull_request.base.sha }}"');

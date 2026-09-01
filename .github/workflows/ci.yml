@@ -72,6 +72,7 @@ jobs:
           run typecheck  npm run typecheck
           run dist       node scripts/verify-dist-artifact.mjs
           run actionlint "$ACTIONLINT_BIN"
+          run docs-pins  npm run docs:pins
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             run commitlint npx commitlint \
               --from "${{ github.event.pull_request.base.sha }}" \
