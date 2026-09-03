@@ -1,0 +1,9 @@
+{
+  "entry": "dist/index.cjs",
+  "env": {},
+  "exitCode": 1,
+  "outputIncludes": [
+    "postman-api-key is required when postman-access-token is not provided"
+  ],
+  "githubOutputIncludes": []
+}

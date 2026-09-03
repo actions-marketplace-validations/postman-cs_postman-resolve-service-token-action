@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "routes": [
+    {
+      "id": "github-api.actions-secrets.public-key",
+      "service": "github-api",
+      "method": "GET",
+      "path": "/repos/{param}/{param}/actions/secrets/public-key",
+      "classification": "intentionally-unsimulated",
+      "reason": "Fetches the repository public key used for GitHub Actions secret encryption. The route is covered with an injected fetcher; a committed live cassette would contain repository identity and authenticated API traffic."
+    },
+    {
+      "id": "github-api.actions-secrets.write",
+      "service": "github-api",
+      "method": "PUT",
+      "path": "/repos/{param}/{param}/actions/secrets/{param}",
+      "classification": "intentionally-unsimulated",
+      "reason": "Writes sealed-box encrypted repository Actions secrets. The route is covered with an injected fetcher, including ordered writes, redacted failures, and partial success; live cassettes would mutate repository credentials."
+    },
+    {
+      "id": "postman-api.service-account-tokens.mint",
+      "service": "postman-api",
+      "method": "POST",
+      "path": "/service-account-tokens",
+      "classification": "intentionally-unsimulated",
+      "reason": "Mints a real service-account access token. Deliberately never simulated: a committed cassette of this route would either carry live token material or pin the suite to a fabricated credential shape. The mint path is covered by unit tests with an injected fetcher, including the 401/403 rejection, the 400 service-accounts-not-enabled branch, malformed JSON, and the token-absent branch."
+    },
+    {
+      "id": "postman-api.me",
+      "service": "postman-api",
+      "method": "GET",
+      "path": "/me",
+      "classification": "live-only",
+      "reason": "Resolves team identity for the minted token and backs the PMAK identity diagnosis on a rejected mint. Called with a Bearer token from the action entry, with the same Bearer from the memoized identity helper, and with x-api-key from the PMAK diagnostic probe. No committed cassette: this action has no WS3 cassette set, and the response carries user and team identity."
+    }
+  ]
+}

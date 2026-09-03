@@ -1,36 +1,40 @@
 name: 'Postman Onboarding: Service Token'
-description: Mint a Postman service-account access token and team ID in CI. Part of the Postman API Onboarding suite.
+description: Recommended credential producer for Postman API Onboarding. Mints a service-account access token and team ID in CI.
 author: Postman
 branding:
   icon: unlock
   color: orange
 inputs:
   postman-api-key:
-    description: Postman API key (PMAK) used to mint the service-account access token. Required when postman-access-token is not provided.
+    description: Recommended credential source. Service-account Postman API key (PMAK) used to mint a fresh access token. Required when postman-access-token is not provided.
     required: false
     default: ""
   postman-access-token:
-    description: Optional pre-existing Postman access token. When provided, the mint step is skipped and this value is returned via outputs.token. Use this to preserve compatibility with workflows that already manage the token externally.
+    description: Compatibility input for externally rotated Postman access tokens. When provided, minting is skipped, this value is returned via outputs.token, and the action warns because fresh service-account minting is preferred.
     required: false
     default: ""
   postman-team-id:
-    description: Optional pre-known Postman team ID. When provided, the team ID lookup is skipped and this value is returned via outputs.team-id.
+    description: Optional pre-known Postman team ID. When provided, the team ID lookup is skipped and this value is returned via outputs.team-id. Recommended with postman-access-token pass-through.
     required: false
     default: ""
+  postman-region:
+    description: "Postman data residency region for public API calls. One of: us or eu. Use the same region as the target Postman team."
+    required: false
+    default: us
   postman-stack:
-    description: "Postman stack profile. One of: prod (api.getpostman.com) or beta (api.getpostman-beta.com)."
+    description: "Postman stack profile. Defaults to the public production stack. Marketplace workflows should leave this as prod."
     required: false
     default: prod
   write-github-secret:
-    description: When 'true', writes the resolved token and team ID to repo secrets named by access-token-secret-name and team-id-secret-name. Requires github-token to be a PAT (or GitHub App installation token) with secrets write permission on the target repo. The default GITHUB_TOKEN cannot write repo secrets.
+    description: When 'true', encrypts the resolved token and team ID with the repository public key and writes them through the GitHub REST Actions Secrets API. Requires GITHUB_REPOSITORY, GitHub API egress, and github-token with repository secrets write permission. Honors GITHUB_API_URL and defaults to api.github.com. The default GITHUB_TOKEN cannot write repo secrets.
     required: false
     default: 'false'
   access-token-secret-name:
-    description: Repo secret name to receive the resolved access token. Used only when write-github-secret is 'true'.
+    description: Repo secret name to receive the resolved access token. Use letters, digits, or underscores; do not start with GITHUB_ or a digit. Used only when write-github-secret is 'true'.
     required: false
     default: POSTMAN_ACCESS_TOKEN
   team-id-secret-name:
-    description: Repo secret name to receive the resolved team ID. Used only when write-github-secret is 'true'.
+    description: Repo secret name to receive the resolved team ID. Use letters, digits, or underscores; do not start with GITHUB_ or a digit. Used only when write-github-secret is 'true'.
     required: false
     default: POSTMAN_TEAM_ID
   github-token:
@@ -43,7 +47,7 @@ outputs:
   team-id:
     description: Resolved Postman team ID. Either looked up via /me or passed through from the postman-team-id input.
   skipped:
-    description: "'true' when the mint step was skipped because postman-access-token was provided as input."
+    description: "'true' when minting was skipped because postman-access-token was provided as input."
 runs:
   using: node24
   main: dist/index.cjs
