@@ -32,7 +32,7 @@ jobs:
       contents: write
       actions: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           # Full history and tags: the version selector reads every tag ever
           # cut so it can skip burnt versions instead of reusing them.
